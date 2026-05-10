@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"/c/Users/oft/go/pkg/mod/go.mongodb.org/mongo-driver/v2@v2.5.0/mongo/\" | head -30; echo \"---\"; ls \"/c/Users/oft/go/pkg/mod/go.mongodb.org/mongo-driver/v2@v2.5.0/mongo/options/\" | head -20)",
+      "Bash(grep -n \"func NewClient\\\\|^type Client\\\\|^func.*Client\" \"/c/Users/oft/go/pkg/mod/github.com/resend/resend-go/v3@v3.6.0/resend.go\" | head -10; echo \"---\"; sed -n '25,80p' \"/c/Users/oft/go/pkg/mod/github.com/resend/resend-go/v3@v3.6.0/emails.go\")",
+      "Bash(go build *)"
+    ]
+  }
+}
