@@ -1,0 +1,17 @@
+$kind: http-request
+name: Register a new user
+description: "Creates an unverified user and emails a verification token. The token is also written to the `tokens` collection in MongoDB (`kind: verify`, TTL 24h)."
+url: "{{baseUrl}}/api/auth/register"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "ahowevesybleberg@gmail.com",
+      "password": "2823858458189",
+      "name": "ofthevoid"
+    }
+order: 1000

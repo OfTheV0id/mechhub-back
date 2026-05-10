@@ -61,6 +61,24 @@ func (r *Repo) UpdatePassword(ctx context.Context, id bson.ObjectID, hash string
 	return err
 }
 
+func (r *Repo) UpdateName(ctx context.Context, id bson.ObjectID, name string) error {
+	_, err := r.users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"name": name}})
+	return err
+}
+
+func (r *Repo) SwapAvatarKey(ctx context.Context, id bson.ObjectID, newKey string) (oldKey string, err error) {
+	var prev User
+	err = r.users.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{"avatar_key": newKey}},
+	).Decode(&prev)
+	if err != nil {
+		return "", err
+	}
+	return prev.AvatarKey, nil
+}
+
 func (r *Repo) IsDuplicateKey(err error) bool {
 	return mongo.IsDuplicateKeyError(err)
 }

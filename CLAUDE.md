@@ -97,3 +97,10 @@ mechhub-back/
   - `tokens.expires_at` TTL=0,`tokens.user_id+kind` 复合索引
 - 用 `bson.ObjectID`,不用 string ID。
 - 集合名复数小写:`users`、`sessions`、`tokens`。
+
+## Postman
+
+- 项目用 Postman **Spec Hub 文件夹格式**(YAML 拆文件,VCS 友好),目录 `postman/`,详细 schema 与命名规则见 [`postman/README.md`](postman/README.md)。
+- **每新增一个 HTTP 接口,必须同步在 `postman/collections/MechHub Backend/<group>/<slug>/<Title>.request.yaml` 加一条**;不允许只加 Go handler 不加 Postman 文件。
+- 新增/修改的占位变量同步进集合根 `.resources/definition.yaml` 的 `variables` 段以及 `environments/local.environment.yaml`。
+- 不要使用单文件 `*.postman_collection.json` 格式。

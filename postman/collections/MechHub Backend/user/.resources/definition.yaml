@@ -1,0 +1,5 @@
+$kind: collection
+description: >-
+  Authenticated endpoints. Requires the `session_id` cookie set by
+  `/api/auth/login`. Returns 401 otherwise.
+order: 2000

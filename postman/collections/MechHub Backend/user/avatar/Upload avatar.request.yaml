@@ -1,0 +1,22 @@
+$kind: http-request
+name: Upload avatar
+description: |-
+  Replace the current user's avatar.
+
+  In Postman, open the **Body** tab → choose **form-data** → add a row with key `avatar`, set the row type to **File**, then pick a local image (png / jpg / jpeg / webp). Max size is `AVATAR_MAX_BYTES` (default 2 MiB). Do **not** set `Content-Type` manually — Postman fills the multipart boundary.
+
+  Response: `{ "avatar_url": "" }`. The previous object in OSS is best-effort deleted.
+url: "{{baseUrl}}/api/user/avatar"
+method: POST
+headers:
+  Accept: application/json
+body:
+  type: formdata
+  content:
+    - type: file
+      key: avatar
+      src:
+        - /C:/Users/oft/Pictures/微信图片_20260114123505_426_90.jpg
+      description: ""
+      disabled: false
+order: 1700

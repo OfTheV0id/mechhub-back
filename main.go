@@ -9,6 +9,7 @@ import (
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/router"
 	"mechhub-back/internal/session"
+	"mechhub-back/internal/storage"
 )
 
 func main() {
@@ -25,8 +26,12 @@ func main() {
 
 	sessions := session.NewStore(mongoDB, cfg.Session.TTL)
 	mailer := mail.New(cfg)
+	oss, err := storage.NewOSS(cfg.OSS)
+	if err != nil {
+		log.Fatalf("oss init: %v", err)
+	}
 
-	r := router.New(cfg, mongoDB, sessions, mailer)
+	r := router.New(cfg, mongoDB, sessions, mailer, oss)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

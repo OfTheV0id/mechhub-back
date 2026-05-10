@@ -19,6 +19,8 @@ type Config struct {
 	Mail    MailConfig
 	App     AppConfig
 	Token   TokenConfig
+	OSS     OSSConfig
+	Avatar  AvatarConfig
 }
 
 type MongoConfig struct {
@@ -52,6 +54,18 @@ type TokenConfig struct {
 	ResetTTL  time.Duration
 }
 
+type OSSConfig struct {
+	Region          string
+	Bucket          string
+	AccessKeyID     string
+	AccessKeySecret string
+	PublicBaseURL   string
+}
+
+type AvatarConfig struct {
+	MaxBytes int64
+}
+
 func Load() *Config {
 	_ = godotenv.Load()
 
@@ -81,6 +95,16 @@ func Load() *Config {
 		Token: TokenConfig{
 			VerifyTTL: time.Duration(getInt("VERIFY_TOKEN_TTL_HOURS", 24)) * time.Hour,
 			ResetTTL:  time.Duration(getInt("RESET_TOKEN_TTL_MINUTES", 30)) * time.Minute,
+		},
+		OSS: OSSConfig{
+			Region:          requireEnv("OSS_REGION"),
+			Bucket:          requireEnv("OSS_BUCKET"),
+			AccessKeyID:     requireEnv("OSS_ACCESS_KEY_ID"),
+			AccessKeySecret: requireEnv("OSS_ACCESS_KEY_SECRET"),
+			PublicBaseURL:   requireEnv("OSS_PUBLIC_BASE_URL"),
+		},
+		Avatar: AvatarConfig{
+			MaxBytes: int64(getInt("AVATAR_MAX_BYTES", 2*1024*1024)),
 		},
 	}
 	return cfg

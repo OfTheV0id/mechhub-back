@@ -12,5 +12,7 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 
 	authed := g.Group("", auth)
 	authed.GET("/user/me", h.Me)
+	authed.POST("/user/update-profile", h.UpdateProfile)
+	authed.POST("/user/avatar", h.UploadAvatar)
 	authed.POST("/user/change-password", h.ChangePassword)
 }

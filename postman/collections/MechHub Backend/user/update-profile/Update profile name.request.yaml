@@ -1,0 +1,17 @@
+$kind: http-request
+name: Update profile name
+description: >-
+  Updates the display name of the current user. `name` is trimmed
+  and must be 1-50 characters.
+url: "{{baseUrl}}/api/user/update-profile"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "{{newName}}"
+    }
+order: 1500

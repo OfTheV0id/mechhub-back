@@ -1,0 +1,27 @@
+# Authenticated requests rely on the session cookie stored by Postman after /api/auth/login.
+name: local
+values:
+  - key: baseUrl
+    value: 'http://localhost:8080'
+    enabled: true
+  - key: email
+    value: test@example.com
+    enabled: true
+  - key: password
+    value: abcd1234
+    enabled: true
+  - key: newPassword
+    value: xyz98765
+    enabled: true
+  - key: name
+    value: Test User
+    enabled: true
+  - key: newName
+    value: Updated Name
+    enabled: true
+  - key: verifyToken
+    value: ''
+    enabled: true
+  - key: resetToken
+    value: ''
+    enabled: true

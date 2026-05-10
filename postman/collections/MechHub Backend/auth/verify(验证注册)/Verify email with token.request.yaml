@@ -1,0 +1,10 @@
+$kind: http-request
+name: Verify email with token
+description: Activates the account. Paste the token from the verification email (or from `db.tokens.find({kind:"verify"})`) into the `verifyToken` collection variable. Tokens are one-shot — after a successful call the row is deleted.
+url: "{{baseUrl}}/api/auth/verify?token=xxNHjNReOFh7XK2qwis8xj74DFIyucTbaZMxjtd_VMk"
+method: GET
+headers:
+  Accept: application/json
+queryParams:
+  token: xxNHjNReOFh7XK2qwis8xj74DFIyucTbaZMxjtd_VMk
+order: 2000

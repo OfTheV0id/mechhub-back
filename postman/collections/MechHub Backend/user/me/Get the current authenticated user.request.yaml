@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get the current authenticated user
+description: >-
+  Returns id / email / verified for the user owning the current
+  session.
+url: "{{baseUrl}}/api/user/me"
+method: GET
+headers:
+  Accept: application/json
+order: 1000

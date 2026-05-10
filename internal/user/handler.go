@@ -2,6 +2,8 @@ package user
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -10,6 +12,13 @@ import (
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/response"
 )
+
+var allowedAvatarExt = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+}
 
 type Handler struct {
 	svc *Service
@@ -26,7 +35,7 @@ func (h *Handler) Register(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	switch err := h.svc.Register(c.Request.Context(), req.Email, req.Password); {
+	switch err := h.svc.Register(c.Request.Context(), req.Email, req.Password, req.Name); {
 	case err == nil:
 		response.OK(c, gin.H{"message": "verification email sent"})
 	case errors.Is(err, ErrEmailExists):
@@ -134,7 +143,59 @@ func (h *Handler) Me(c *gin.Context) {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	response.OK(c, MeResp{ID: u.ID.Hex(), Email: u.Email, Verified: u.Verified})
+	response.OK(c, MeResp{
+		ID:        u.ID.Hex(),
+		Email:     u.Email,
+		Name:      u.Name,
+		AvatarURL: h.svc.AvatarURL(u.AvatarKey),
+		Verified:  u.Verified,
+	})
+}
+
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	var req UpdateProfileReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, 400, response.CodeBadRequest, err.Error())
+		return
+	}
+	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	if err := h.svc.UpdateProfile(c.Request.Context(), uid, req.Name); err != nil {
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+		return
+	}
+	response.OK(c, gin.H{"message": "profile updated"})
+}
+
+func (h *Handler) UploadAvatar(c *gin.Context) {
+	header, err := c.FormFile("avatar")
+	if err != nil {
+		response.Fail(c, 400, response.CodeBadRequest, "missing 'avatar' file field")
+		return
+	}
+	if header.Size > h.cfg.Avatar.MaxBytes {
+		response.Fail(c, 413, response.CodeBadRequest, "avatar too large")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	contentType, ok := allowedAvatarExt[ext]
+	if !ok {
+		response.Fail(c, 400, response.CodeBadRequest, "unsupported file type, allow png/jpg/jpeg/webp")
+		return
+	}
+	file, err := header.Open()
+	if err != nil {
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+		return
+	}
+	defer file.Close()
+
+	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	url, err := h.svc.UpdateAvatar(c.Request.Context(), uid, file, contentType, ext)
+	if err != nil {
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+		return
+	}
+	response.OK(c, UploadAvatarResp{AvatarURL: url})
 }
 
 func (h *Handler) setSessionCookie(c *gin.Context, value string, maxAge int) {

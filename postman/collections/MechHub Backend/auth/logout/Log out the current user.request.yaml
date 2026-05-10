@@ -1,0 +1,10 @@
+$kind: http-request
+name: Log out the current user
+description: >-
+  Removes the server-side session and clears the `session_id` cookie.
+  Idempotent — safe to call without an active session.
+url: "{{baseUrl}}/api/auth/logout"
+method: POST
+headers:
+  Accept: application/json
+order: 4000

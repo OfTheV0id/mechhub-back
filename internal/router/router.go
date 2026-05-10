@@ -8,10 +8,11 @@ import (
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/session"
+	"mechhub-back/internal/storage"
 	"mechhub-back/internal/user"
 )
 
-func New(cfg *config.Config, db *mongo.Database, sessions *session.Store, mailer *mail.Sender) *gin.Engine {
+func New(cfg *config.Config, db *mongo.Database, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS) *gin.Engine {
 	r := gin.Default()
 
 	if cfg.CORS.Enabled {
@@ -21,7 +22,7 @@ func New(cfg *config.Config, db *mongo.Database, sessions *session.Store, mailer
 	api := r.Group("/api")
 
 	userRepo := user.NewRepo(db)
-	userSvc := user.NewService(userRepo, sessions, mailer, cfg)
+	userSvc := user.NewService(userRepo, sessions, mailer, oss, cfg)
 	userHandler := user.NewHandler(userSvc, cfg)
 	user.Mount(api, userHandler, middleware.Auth(sessions, cfg.Session.CookieName))
 

@@ -1,0 +1,6 @@
+# Authenticated requests rely on the session cookie stored by Postman after /api/auth/login.
+name: production
+values:
+  - key: baseUrl
+    value: 'https://api.mechhub.com'
+    enabled: true

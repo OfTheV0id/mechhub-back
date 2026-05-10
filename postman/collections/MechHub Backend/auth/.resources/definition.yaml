@@ -1,0 +1,6 @@
+$kind: collection
+description: >-
+  Public endpoints for account creation, email verification, login,
+  logout, and password recovery. None of these require an existing
+  session.
+order: 1000

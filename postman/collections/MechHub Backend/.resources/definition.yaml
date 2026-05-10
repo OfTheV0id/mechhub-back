@@ -1,0 +1,31 @@
+$kind: collection
+description: >-
+  MechHub backend (Go + Gin + MongoDB). Session-based auth via the
+  `session_id` cookie set after `/api/auth/login`.
+
+
+  Flow for full local test:
+
+
+  1. Register → check mailbox or `db.tokens` for the verify token,
+     paste into the `verifyToken` variable.
+
+  2. Verify Email → account becomes active.
+
+  3. Login → Postman cookie jar stores `session_id` automatically.
+
+  4. Authenticated requests (Me, Change Password) reuse that cookie.
+
+  5. Forgot Password → grab reset token the same way → Reset Password.
+
+
+  All password fields require min length 8.
+variables:
+  baseUrl: http://localhost:8080
+  email: test@example.com
+  password: abcd1234
+  newPassword: xyz98765
+  name: Test User
+  newName: Updated Name
+  verifyToken: ""
+  resetToken: ""

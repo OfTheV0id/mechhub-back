@@ -2,7 +2,10 @@ package user
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/session"
+	"mechhub-back/internal/storage"
 )
 
 var (
@@ -26,33 +30,84 @@ type Service struct {
 	repo     *Repo
 	sessions *session.Store
 	mailer   *mail.Sender
+	oss      *storage.OSS
 	cfg      *config.Config
 }
 
-func NewService(repo *Repo, sessions *session.Store, mailer *mail.Sender, cfg *config.Config) *Service {
-	return &Service{repo: repo, sessions: sessions, mailer: mailer, cfg: cfg}
+func NewService(repo *Repo, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, cfg *config.Config) *Service {
+	return &Service{repo: repo, sessions: sessions, mailer: mailer, oss: oss, cfg: cfg}
 }
 
-func (s *Service) Register(ctx context.Context, email, password string) error {
+func (s *Service) Register(ctx context.Context, email, password, name string) error {
 	email = normalizeEmail(email)
+	name = strings.TrimSpace(name)
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return err
 	}
-	u := &User{
-		ID:           bson.NewObjectID(),
-		Email:        email,
-		PasswordHash: string(hash),
-		Verified:     false,
-		CreatedAt:    time.Now(),
-	}
-	if err := s.repo.Insert(ctx, u); err != nil {
-		if s.repo.IsDuplicateKey(err) {
-			return ErrEmailExists
+
+	existing, err := s.repo.FindByEmail(ctx, email)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		u := &User{
+			ID:           bson.NewObjectID(),
+			Email:        email,
+			PasswordHash: string(hash),
+			Name:         name,
+			Verified:     false,
+			CreatedAt:    time.Now(),
 		}
+		if err := s.repo.Insert(ctx, u); err != nil {
+			if s.repo.IsDuplicateKey(err) {
+				return ErrEmailExists
+			}
+			return err
+		}
+		return s.sendVerifyToken(ctx, u)
+	case err != nil:
 		return err
+	case existing.Verified:
+		return ErrEmailExists
+	default:
+		_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindVerify)
+		return s.sendVerifyToken(ctx, existing)
 	}
-	return s.sendVerifyToken(ctx, u)
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, userID bson.ObjectID, name string) error {
+	return s.repo.UpdateName(ctx, userID, strings.TrimSpace(name))
+}
+
+func (s *Service) UpdateAvatar(ctx context.Context, userID bson.ObjectID, body io.Reader, contentType, ext string) (string, error) {
+	suffix, err := randomHex(8)
+	if err != nil {
+		return "", err
+	}
+	key := "avatars/" + userID.Hex() + "/" + suffix + ext
+	if err := s.oss.Upload(ctx, key, body, contentType); err != nil {
+		return "", err
+	}
+	oldKey, err := s.repo.SwapAvatarKey(ctx, userID, key)
+	if err != nil {
+		_ = s.oss.Delete(ctx, key)
+		return "", err
+	}
+	if oldKey != "" && oldKey != key {
+		_ = s.oss.Delete(ctx, oldKey)
+	}
+	return s.oss.PublicURL(key), nil
+}
+
+func (s *Service) AvatarURL(key string) string {
+	return s.oss.PublicURL(key)
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (s *Service) sendVerifyToken(ctx context.Context, u *User) error {

@@ -10,6 +10,8 @@ type User struct {
 	ID           bson.ObjectID `bson:"_id"`
 	Email        string        `bson:"email"`
 	PasswordHash string        `bson:"password_hash"`
+	Name         string        `bson:"name"`
+	AvatarKey    string        `bson:"avatar_key"`
 	Verified     bool          `bson:"verified"`
 	CreatedAt    time.Time     `bson:"created_at"`
 }
@@ -29,6 +31,11 @@ type Token struct {
 type RegisterReq struct {
 	Email    string `json:"email"    binding:"required,email"`
 	Password string `json:"password" binding:"required,min=8,max=128"`
+	Name     string `json:"name"     binding:"required,min=1,max=50"`
+}
+
+type UpdateProfileReq struct {
+	Name string `json:"name" binding:"required,min=1,max=50"`
 }
 
 type LoginReq struct {
@@ -51,7 +58,13 @@ type ChangePasswordReq struct {
 }
 
 type MeResp struct {
-	ID       string `json:"id"`
-	Email    string `json:"email"`
-	Verified bool   `json:"verified"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+	Verified  bool   `json:"verified"`
+}
+
+type UploadAvatarResp struct {
+	AvatarURL string `json:"avatar_url"`
 }
