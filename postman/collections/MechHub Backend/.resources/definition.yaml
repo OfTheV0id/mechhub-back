@@ -7,10 +7,13 @@ description: >-
   Flow for full local test:
 
 
-  1. Register → check mailbox or `db.tokens` for the verify token,
-     paste into the `verifyToken` variable.
+  1. Register as student → check mailbox or `db.tokens` for the verify token,
+     paste into the `verifyToken` variable. Register as teacher → admin receives
+     an approval email.
 
-  2. Verify Email → account becomes active.
+  2. Student verification → call Verify Email. Teacher approval → check admin
+     mailbox or `db.tokens` for the `teacher_approval` token, paste into the
+     `teacherApprovalToken` variable.
 
   3. Login → Postman cookie jar stores `session_id` automatically.
 
@@ -26,6 +29,8 @@ variables:
   password: abcd1234
   newPassword: xyz98765
   name: Test User
+  role: student
   newName: Updated Name
   verifyToken: ""
+  teacherApprovalToken: ""
   resetToken: ""

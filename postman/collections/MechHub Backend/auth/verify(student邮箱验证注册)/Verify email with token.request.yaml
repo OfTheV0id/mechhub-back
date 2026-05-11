@@ -1,0 +1,10 @@
+$kind: http-request
+name: Verify email with token
+description: Activates a student account with a one-shot verification token and returns `message`, `role`, and `verified`. This endpoint does not log the user in or set a session cookie.
+url: "{{baseUrl}}/api/auth/verify?token={{verifyToken}}"
+method: GET
+headers:
+  Accept: application/json
+queryParams:
+  token: "{{verifyToken}}"
+order: 2000

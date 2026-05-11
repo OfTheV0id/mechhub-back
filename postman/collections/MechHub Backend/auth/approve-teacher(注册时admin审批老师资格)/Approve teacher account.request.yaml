@@ -1,0 +1,10 @@
+$kind: http-request
+name: Approve teacher account
+description: Approves a pending teacher account with a one-shot `teacher_approval` token and returns `message`, `role`, and `verified`. Any one admin can approve; after success the token row is deleted. This endpoint does not log the teacher in or set a session cookie.
+url: "{{baseUrl}}/api/auth/approve-teacher?token=QCUYizwJbB0tsgCx1TxueEa5iPDmEs94ZW_i8j8f00I"
+method: GET
+headers:
+  Accept: application/json
+queryParams:
+  token: QCUYizwJbB0tsgCx1TxueEa5iPDmEs94ZW_i8j8f00I
+order: 2500

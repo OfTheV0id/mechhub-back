@@ -1,6 +1,6 @@
 $kind: http-request
 name: Register a new user
-description: "Creates an unverified user and emails a verification token. The token is also written to the `tokens` collection in MongoDB (`kind: verify`, TTL 24h)."
+description: Creates a user with role `student` or `teacher`. Students receive an email verification token. Teachers require one admin to approve the `teacher_approval` token.
 url: "{{baseUrl}}/api/auth/register"
 method: POST
 headers:
@@ -12,6 +12,7 @@ body:
     {
       "email": "ahowevesybleberg@gmail.com",
       "password": "2823858458189",
-      "name": "ofthevoid"
+      "name": "ofthevoid",
+      "role": "teacher"
     }
 order: 1000

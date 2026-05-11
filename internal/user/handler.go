@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -35,9 +36,14 @@ func (h *Handler) Register(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	switch err := h.svc.Register(c.Request.Context(), req.Email, req.Password, req.Name); {
+	role, verified, err := h.svc.Register(c.Request.Context(), req.Email, req.Password, req.Name, req.Role)
+	switch {
 	case err == nil:
-		response.OK(c, gin.H{"message": "verification email sent"})
+		message := "verification email sent"
+		if role == UserRoleTeacher {
+			message = "teacher approval email sent"
+		}
+		response.OK(c, RegisterResp{Message: message, Role: role, Verified: verified})
 	case errors.Is(err, ErrEmailExists):
 		response.Fail(c, 409, response.CodeEmailExists, "email already registered")
 	default:
@@ -51,9 +57,27 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, "token required")
 		return
 	}
-	switch err := h.svc.VerifyEmail(c.Request.Context(), token); {
+	role, verified, err := h.svc.VerifyEmail(c.Request.Context(), token)
+	switch {
 	case err == nil:
-		response.OK(c, gin.H{"verified": true})
+		response.OK(c, RegisterResp{Message: "email verified", Role: role, Verified: verified})
+	case errors.Is(err, ErrTokenInvalid):
+		response.Fail(c, 400, response.CodeTokenInvalid, "token invalid or expired")
+	default:
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+	}
+}
+
+func (h *Handler) ApproveTeacher(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		response.Fail(c, 400, response.CodeBadRequest, "token required")
+		return
+	}
+	role, verified, err := h.svc.ApproveTeacher(c.Request.Context(), token)
+	switch {
+	case err == nil:
+		response.OK(c, RegisterResp{Message: "teacher approved", Role: role, Verified: verified})
 	case errors.Is(err, ErrTokenInvalid):
 		response.Fail(c, 400, response.CodeTokenInvalid, "token invalid or expired")
 	default:
@@ -67,15 +91,15 @@ func (h *Handler) Login(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	sess, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
+	sess, u, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
 	switch {
 	case err == nil:
 		h.setSessionCookie(c, sess.ID, int(h.cfg.Session.TTL.Seconds()))
-		response.OK(c, gin.H{"message": "logged in"})
+		response.OK(c, LoginResp{Message: "logged in", UserData: h.userResp(u)})
 	case errors.Is(err, ErrInvalidCredentials):
 		response.Fail(c, 401, response.CodeInvalidCredentials, "invalid email or password")
 	case errors.Is(err, ErrEmailNotVerified):
-		response.Fail(c, 403, response.CodeEmailNotVerified, "email not verified")
+		response.Fail(c, 403, response.CodeEmailNotVerified, "account not verified")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -143,13 +167,19 @@ func (h *Handler) Me(c *gin.Context) {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	response.OK(c, MeResp{
+	response.OK(c, h.userResp(u))
+}
+
+func (h *Handler) userResp(u *User) MeResp {
+	return MeResp{
 		ID:        u.ID.Hex(),
 		Email:     u.Email,
 		Name:      u.Name,
+		Role:      u.Role,
 		AvatarURL: h.svc.AvatarURL(u.AvatarKey),
 		Verified:  u.Verified,
-	})
+		CreatedAt: u.CreatedAt.Format(time.RFC3339),
+	}
 }
 
 func (h *Handler) UpdateProfile(c *gin.Context) {
@@ -159,11 +189,12 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
-	if err := h.svc.UpdateProfile(c.Request.Context(), uid, req.Name); err != nil {
+	u, err := h.svc.UpdateProfile(c.Request.Context(), uid, req.Name)
+	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	response.OK(c, gin.H{"message": "profile updated"})
+	response.OK(c, UpdateProfileResp{Message: "profile updated", UserData: h.userResp(u)})
 }
 
 func (h *Handler) UploadAvatar(c *gin.Context) {

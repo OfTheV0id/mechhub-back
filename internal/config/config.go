@@ -43,6 +43,7 @@ type SessionConfig struct {
 type MailConfig struct {
 	ResendAPIKey string
 	From         string
+	AdminEmails  []string
 }
 
 type AppConfig struct {
@@ -88,6 +89,7 @@ func Load() *Config {
 		Mail: MailConfig{
 			ResendAPIKey: requireEnv("RESEND_API_KEY"),
 			From:         requireEnv("MAIL_FROM"),
+			AdminEmails:  splitCSV(requireEnv("ADMIN_EMAILS")),
 		},
 		App: AppConfig{
 			BaseURL: requireEnv("APP_BASE_URL"),

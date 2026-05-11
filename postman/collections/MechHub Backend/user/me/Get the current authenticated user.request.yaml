@@ -1,7 +1,7 @@
 $kind: http-request
 name: Get the current authenticated user
 description: >-
-  Returns id / email / verified for the user owning the current
+  Returns id / email / name / role / avatar_url / verified for the user owning the current
   session.
 url: "{{baseUrl}}/api/user/me"
 method: GET

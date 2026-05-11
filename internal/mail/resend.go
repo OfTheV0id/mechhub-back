@@ -2,6 +2,7 @@ package mail
 
 import (
 	"fmt"
+	"html"
 
 	"github.com/resend/resend-go/v3"
 
@@ -30,6 +31,22 @@ func (s *Sender) SendVerifyEmail(to, token string) error {
 		Subject: "Verify your MechHub account",
 		Html: fmt.Sprintf(
 			`<p>Welcome to MechHub.</p><p>Click <a href="%s">here</a> to verify your email.</p><p>This link expires soon.</p>`,
+			link,
+		),
+	})
+	return err
+}
+
+func (s *Sender) SendTeacherApprovalEmail(to []string, teacherName, teacherEmail, token string) error {
+	link := fmt.Sprintf("%s/approve-teacher?token=%s", s.baseURL, token)
+	_, err := s.client.Emails.Send(&resend.SendEmailRequest{
+		From:    s.from,
+		To:      to,
+		Subject: "Approve MechHub teacher account",
+		Html: fmt.Sprintf(
+			`<p>A teacher account is waiting for approval.</p><p>Name: %s</p><p>Email: %s</p><p>Click <a href="%s">here</a> to approve this account.</p><p>Only one admin needs to approve it.</p>`,
+			html.EscapeString(teacherName),
+			html.EscapeString(teacherEmail),
 			link,
 		),
 	})

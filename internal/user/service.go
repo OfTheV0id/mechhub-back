@@ -38,12 +38,13 @@ func NewService(repo *Repo, sessions *session.Store, mailer *mail.Sender, oss *s
 	return &Service{repo: repo, sessions: sessions, mailer: mailer, oss: oss, cfg: cfg}
 }
 
-func (s *Service) Register(ctx context.Context, email, password, name string) error {
+func (s *Service) Register(ctx context.Context, email, password, name, role string) (string, bool, error) {
 	email = normalizeEmail(email)
 	name = strings.TrimSpace(name)
+	role = strings.ToLower(strings.TrimSpace(role))
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 
 	existing, err := s.repo.FindByEmail(ctx, email)
@@ -54,28 +55,39 @@ func (s *Service) Register(ctx context.Context, email, password, name string) er
 			Email:        email,
 			PasswordHash: string(hash),
 			Name:         name,
+			Role:         role,
 			Verified:     false,
 			CreatedAt:    time.Now(),
 		}
 		if err := s.repo.Insert(ctx, u); err != nil {
 			if s.repo.IsDuplicateKey(err) {
-				return ErrEmailExists
+				return "", false, ErrEmailExists
 			}
-			return err
+			return "", false, err
 		}
-		return s.sendVerifyToken(ctx, u)
+		if role == UserRoleTeacher {
+			return role, false, s.sendTeacherApprovalToken(ctx, u)
+		}
+		return role, false, s.sendVerifyToken(ctx, u)
 	case err != nil:
-		return err
+		return "", false, err
 	case existing.Verified:
-		return ErrEmailExists
+		return "", false, ErrEmailExists
 	default:
+		if existing.Role == UserRoleTeacher {
+			_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindTeacherApproval)
+			return existing.Role, false, s.sendTeacherApprovalToken(ctx, existing)
+		}
 		_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindVerify)
-		return s.sendVerifyToken(ctx, existing)
+		return existing.Role, false, s.sendVerifyToken(ctx, existing)
 	}
 }
 
-func (s *Service) UpdateProfile(ctx context.Context, userID bson.ObjectID, name string) error {
-	return s.repo.UpdateName(ctx, userID, strings.TrimSpace(name))
+func (s *Service) UpdateProfile(ctx context.Context, userID bson.ObjectID, name string) (*User, error) {
+	if err := s.repo.UpdateName(ctx, userID, strings.TrimSpace(name)); err != nil {
+		return nil, err
+	}
+	return s.repo.FindByID(ctx, userID)
 }
 
 func (s *Service) UpdateAvatar(ctx context.Context, userID bson.ObjectID, body io.Reader, contentType, ext string) (string, error) {
@@ -126,35 +138,83 @@ func (s *Service) sendVerifyToken(ctx context.Context, u *User) error {
 	return s.mailer.SendVerifyEmail(u.Email, tok)
 }
 
-func (s *Service) VerifyEmail(ctx context.Context, token string) error {
-	t, err := s.repo.FindAndDeleteToken(ctx, token, TokenKindVerify)
-	if errors.Is(err, ErrNotFound) {
-		return ErrTokenInvalid
-	}
+func (s *Service) sendTeacherApprovalToken(ctx context.Context, u *User) error {
+	tok, err := newToken()
 	if err != nil {
 		return err
 	}
-	if time.Now().After(t.ExpiresAt) {
-		return ErrTokenInvalid
+	if err := s.repo.InsertToken(ctx, &Token{
+		ID:        tok,
+		UserID:    u.ID,
+		Kind:      TokenKindTeacherApproval,
+		ExpiresAt: time.Now().Add(s.cfg.Token.VerifyTTL),
+	}); err != nil {
+		return err
 	}
-	return s.repo.SetVerified(ctx, t.UserID)
+	return s.mailer.SendTeacherApprovalEmail(s.cfg.Mail.AdminEmails, u.Name, u.Email, tok)
 }
 
-func (s *Service) Login(ctx context.Context, email, password string) (*session.Session, error) {
-	u, err := s.repo.FindByEmail(ctx, normalizeEmail(email))
+func (s *Service) VerifyEmail(ctx context.Context, token string) (string, bool, error) {
+	t, err := s.repo.FindAndDeleteToken(ctx, token, TokenKindVerify)
 	if errors.Is(err, ErrNotFound) {
-		return nil, ErrInvalidCredentials
+		return "", false, ErrTokenInvalid
 	}
 	if err != nil {
-		return nil, err
+		return "", false, err
+	}
+	if time.Now().After(t.ExpiresAt) {
+		return "", false, ErrTokenInvalid
+	}
+	if err := s.repo.SetVerified(ctx, t.UserID); err != nil {
+		return "", false, err
+	}
+	u, err := s.repo.FindByID(ctx, t.UserID)
+	if err != nil {
+		return "", false, err
+	}
+	return u.Role, u.Verified, nil
+}
+
+func (s *Service) ApproveTeacher(ctx context.Context, token string) (string, bool, error) {
+	t, err := s.repo.FindAndDeleteToken(ctx, token, TokenKindTeacherApproval)
+	if errors.Is(err, ErrNotFound) {
+		return "", false, ErrTokenInvalid
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if time.Now().After(t.ExpiresAt) {
+		return "", false, ErrTokenInvalid
+	}
+	if err := s.repo.SetVerified(ctx, t.UserID); err != nil {
+		return "", false, err
+	}
+	u, err := s.repo.FindByID(ctx, t.UserID)
+	if err != nil {
+		return "", false, err
+	}
+	return u.Role, u.Verified, nil
+}
+
+func (s *Service) Login(ctx context.Context, email, password string) (*session.Session, *User, error) {
+	u, err := s.repo.FindByEmail(ctx, normalizeEmail(email))
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil, ErrInvalidCredentials
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
-		return nil, ErrInvalidCredentials
+		return nil, nil, ErrInvalidCredentials
 	}
 	if !u.Verified {
-		return nil, ErrEmailNotVerified
+		return nil, nil, ErrEmailNotVerified
 	}
-	return s.sessions.New(ctx, u.ID)
+	sess, err := s.sessions.New(ctx, u.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sess, u, nil
 }
 
 func (s *Service) Logout(ctx context.Context, sid string) error {

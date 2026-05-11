@@ -11,14 +11,19 @@ type User struct {
 	Email        string        `bson:"email"`
 	PasswordHash string        `bson:"password_hash"`
 	Name         string        `bson:"name"`
+	Role         string        `bson:"role"`
 	AvatarKey    string        `bson:"avatar_key"`
 	Verified     bool          `bson:"verified"`
 	CreatedAt    time.Time     `bson:"created_at"`
 }
 
 const (
-	TokenKindVerify = "verify"
-	TokenKindReset  = "reset"
+	UserRoleStudent = "student"
+	UserRoleTeacher = "teacher"
+
+	TokenKindVerify          = "verify"
+	TokenKindReset           = "reset"
+	TokenKindTeacherApproval = "teacher_approval"
 )
 
 type Token struct {
@@ -32,6 +37,13 @@ type RegisterReq struct {
 	Email    string `json:"email"    binding:"required,email"`
 	Password string `json:"password" binding:"required,min=8,max=128"`
 	Name     string `json:"name"     binding:"required,min=1,max=50"`
+	Role     string `json:"role"     binding:"required,oneof=student teacher"`
+}
+
+type RegisterResp struct {
+	Message  string `json:"message"`
+	Role     string `json:"role"`
+	Verified bool   `json:"verified"`
 }
 
 type UpdateProfileReq struct {
@@ -41,6 +53,16 @@ type UpdateProfileReq struct {
 type LoginReq struct {
 	Email    string `json:"email"    binding:"required,email"`
 	Password string `json:"password" binding:"required"`
+}
+
+type LoginResp struct {
+	Message  string `json:"message"`
+	UserData MeResp `json:"userdata"`
+}
+
+type UpdateProfileResp struct {
+	Message  string `json:"message"`
+	UserData MeResp `json:"userdata"`
 }
 
 type ForgotPasswordReq struct {
@@ -61,8 +83,10 @@ type MeResp struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Name      string `json:"name"`
+	Role      string `json:"role"`
 	AvatarURL string `json:"avatar_url"`
 	Verified  bool   `json:"verified"`
+	CreatedAt string `json:"created_at"`
 }
 
 type UploadAvatarResp struct {
