@@ -7,6 +7,7 @@ import (
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
 	"mechhub-back/internal/mail"
+	"mechhub-back/internal/oauth"
 	"mechhub-back/internal/router"
 	"mechhub-back/internal/session"
 	"mechhub-back/internal/storage"
@@ -30,8 +31,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("oss init: %v", err)
 	}
+	google := oauth.NewGoogle(cfg.Google)
 
-	r := router.New(cfg, mongoDB, sessions, mailer, oss)
+	r := router.New(cfg, mongoDB, sessions, mailer, oss, google)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

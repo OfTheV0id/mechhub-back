@@ -1,0 +1,18 @@
+$kind: http-request
+name: Handle Google OAuth callback
+description: >-
+  Callback endpoint Google redirects to with `?code=...&state=...`.
+  Verifies the state cookie set by `/auth/google`, exchanges the
+  code for tokens, fetches user info, creates / links the user,
+  mirrors the Google avatar to OSS on first sign-in, sets
+  `session_id` cookie, then 302s to the original `return` URL.
+
+
+  Don't call this manually — Google calls it. This entry exists for
+  documentation only. If you need to debug, look at the backend
+  logs.
+url: "{{baseUrl}}/api/auth/google/callback?code={{googleAuthCode}}&state={{googleAuthState}}"
+method: GET
+headers:
+  Accept: text/html
+order: 6100

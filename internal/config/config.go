@@ -21,6 +21,7 @@ type Config struct {
 	Token   TokenConfig
 	OSS     OSSConfig
 	Avatar  AvatarConfig
+	Google  GoogleConfig
 }
 
 type MongoConfig struct {
@@ -51,8 +52,9 @@ type AppConfig struct {
 }
 
 type TokenConfig struct {
-	VerifyTTL time.Duration
-	ResetTTL  time.Duration
+	VerifyTTL           time.Duration
+	ResetTTL            time.Duration
+	TeacherApprovalTTL  time.Duration
 }
 
 type OSSConfig struct {
@@ -65,6 +67,13 @@ type OSSConfig struct {
 
 type AvatarConfig struct {
 	MaxBytes int64
+}
+
+type GoogleConfig struct {
+	ClientID         string
+	ClientSecret     string
+	RedirectURL      string
+	DefaultReturnURL string
 }
 
 func Load() *Config {
@@ -95,8 +104,9 @@ func Load() *Config {
 			BaseURL: requireEnv("APP_BASE_URL"),
 		},
 		Token: TokenConfig{
-			VerifyTTL: time.Duration(getInt("VERIFY_TOKEN_TTL_HOURS", 24)) * time.Hour,
-			ResetTTL:  time.Duration(getInt("RESET_TOKEN_TTL_MINUTES", 30)) * time.Minute,
+			VerifyTTL:          time.Duration(getInt("VERIFY_TOKEN_TTL_HOURS", 24)) * time.Hour,
+			ResetTTL:           time.Duration(getInt("RESET_TOKEN_TTL_MINUTES", 30)) * time.Minute,
+			TeacherApprovalTTL: time.Duration(getInt("TEACHER_APPROVAL_TTL_HOURS", 168)) * time.Hour,
 		},
 		OSS: OSSConfig{
 			Region:          requireEnv("OSS_REGION"),
@@ -107,6 +117,12 @@ func Load() *Config {
 		},
 		Avatar: AvatarConfig{
 			MaxBytes: int64(getInt("AVATAR_MAX_BYTES", 2*1024*1024)),
+		},
+		Google: GoogleConfig{
+			ClientID:         requireEnv("GOOGLE_CLIENT_ID"),
+			ClientSecret:     requireEnv("GOOGLE_CLIENT_SECRET"),
+			RedirectURL:      requireEnv("GOOGLE_REDIRECT_URL"),
+			DefaultReturnURL: requireEnv("GOOGLE_DEFAULT_RETURN_URL"),
 		},
 	}
 	return cfg

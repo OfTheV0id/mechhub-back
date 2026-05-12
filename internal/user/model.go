@@ -13,6 +13,7 @@ type User struct {
 	Name         string        `bson:"name"`
 	Role         string        `bson:"role"`
 	AvatarKey    string        `bson:"avatar_key"`
+	GoogleSub    string        `bson:"google_sub"`
 	Verified     bool          `bson:"verified"`
 	CreatedAt    time.Time     `bson:"created_at"`
 }

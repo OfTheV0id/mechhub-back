@@ -1,0 +1,20 @@
+$kind: http-request
+name: Start Google OAuth login
+description: >-
+  Start point of the Google OAuth login. Open this URL **in a
+  browser** (not from inside Postman) — the backend writes an
+  `oauth_state` cookie and 302s to Google. After the user
+  authorizes, Google redirects to `/api/auth/google/callback`, the
+  backend creates / links a user and sets the `session_id` cookie,
+  then redirects to `GOOGLE_DEFAULT_RETURN_URL` (the frontend
+  homepage).
+
+
+  Calling this directly from Postman won't sign you in — Postman
+  doesn't follow the cross-origin Google auth flow. This entry
+  exists for documentation only.
+url: "{{baseUrl}}/api/auth/google"
+method: GET
+headers:
+  Accept: text/html
+order: 6000

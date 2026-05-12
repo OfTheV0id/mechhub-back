@@ -66,6 +66,16 @@ func (r *Repo) UpdateName(ctx context.Context, id bson.ObjectID, name string) er
 	return err
 }
 
+func (r *Repo) UpdateRole(ctx context.Context, id bson.ObjectID, role string) error {
+	_, err := r.users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"role": role}})
+	return err
+}
+
+func (r *Repo) SetGoogleSub(ctx context.Context, id bson.ObjectID, sub string) error {
+	_, err := r.users.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"google_sub": sub}})
+	return err
+}
+
 func (r *Repo) SwapAvatarKey(ctx context.Context, id bson.ObjectID, newKey string) (oldKey string, err error) {
 	var prev User
 	err = r.users.FindOneAndUpdate(

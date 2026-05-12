@@ -14,6 +14,7 @@ import (
 
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/mail"
+	"mechhub-back/internal/oauth"
 	"mechhub-back/internal/session"
 	"mechhub-back/internal/storage"
 )
@@ -24,6 +25,7 @@ var (
 	ErrEmailNotVerified   = errors.New("email not verified")
 	ErrTokenInvalid       = errors.New("token invalid or expired")
 	ErrPasswordWrong      = errors.New("current password is wrong")
+	ErrGoogleUnverified   = errors.New("google account email not verified")
 )
 
 type Service struct {
@@ -31,11 +33,12 @@ type Service struct {
 	sessions *session.Store
 	mailer   *mail.Sender
 	oss      *storage.OSS
+	google   *oauth.Google
 	cfg      *config.Config
 }
 
-func NewService(repo *Repo, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, cfg *config.Config) *Service {
-	return &Service{repo: repo, sessions: sessions, mailer: mailer, oss: oss, cfg: cfg}
+func NewService(repo *Repo, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, google *oauth.Google, cfg *config.Config) *Service {
+	return &Service{repo: repo, sessions: sessions, mailer: mailer, oss: oss, google: google, cfg: cfg}
 }
 
 func (s *Service) Register(ctx context.Context, email, password, name, role string) (string, bool, error) {
@@ -74,12 +77,18 @@ func (s *Service) Register(ctx context.Context, email, password, name, role stri
 	case existing.Verified:
 		return "", false, ErrEmailExists
 	default:
-		if existing.Role == UserRoleTeacher {
-			_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindTeacherApproval)
-			return existing.Role, false, s.sendTeacherApprovalToken(ctx, existing)
+		if existing.Role != role {
+			if err := s.repo.UpdateRole(ctx, existing.ID, role); err != nil {
+				return "", false, err
+			}
+			existing.Role = role
 		}
 		_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindVerify)
-		return existing.Role, false, s.sendVerifyToken(ctx, existing)
+		_ = s.repo.DeleteUserTokens(ctx, existing.ID, TokenKindTeacherApproval)
+		if role == UserRoleTeacher {
+			return role, false, s.sendTeacherApprovalToken(ctx, existing)
+		}
+		return role, false, s.sendVerifyToken(ctx, existing)
 	}
 }
 
@@ -147,7 +156,7 @@ func (s *Service) sendTeacherApprovalToken(ctx context.Context, u *User) error {
 		ID:        tok,
 		UserID:    u.ID,
 		Kind:      TokenKindTeacherApproval,
-		ExpiresAt: time.Now().Add(s.cfg.Token.VerifyTTL),
+		ExpiresAt: time.Now().Add(s.cfg.Token.TeacherApprovalTTL),
 	}); err != nil {
 		return err
 	}
@@ -290,4 +299,96 @@ func (s *Service) Me(ctx context.Context, userID bson.ObjectID) (*User, error) {
 
 func normalizeEmail(e string) string {
 	return strings.ToLower(strings.TrimSpace(e))
+}
+
+func (s *Service) GoogleAuthURL(state string) string {
+	return s.google.AuthURL(state)
+}
+
+func (s *Service) GoogleSignIn(ctx context.Context, code string) (*session.Session, error) {
+	tok, err := s.google.Exchange(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	info, err := s.google.FetchUser(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	if !info.EmailVerified {
+		return nil, ErrGoogleUnverified
+	}
+
+	email := normalizeEmail(info.Email)
+	u, err := s.repo.FindByEmail(ctx, email)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		u = &User{
+			ID:        bson.NewObjectID(),
+			Email:     email,
+			Name:      strings.TrimSpace(info.Name),
+			Role:      UserRoleStudent,
+			GoogleSub: info.Sub,
+			Verified:  true,
+			CreatedAt: time.Now(),
+		}
+		if err := s.repo.Insert(ctx, u); err != nil {
+			return nil, err
+		}
+	case err != nil:
+		return nil, err
+	default:
+		if u.GoogleSub == "" {
+			if err := s.repo.SetGoogleSub(ctx, u.ID, info.Sub); err != nil {
+				return nil, err
+			}
+			u.GoogleSub = info.Sub
+		}
+		if !u.Verified {
+			if err := s.repo.SetVerified(ctx, u.ID); err != nil {
+				return nil, err
+			}
+			u.Verified = true
+		}
+	}
+
+	if u.AvatarKey == "" && info.Picture != "" {
+		_ = s.mirrorGoogleAvatar(ctx, u, info.Picture)
+	}
+
+	return s.sessions.New(ctx, u.ID)
+}
+
+func (s *Service) mirrorGoogleAvatar(ctx context.Context, u *User, pictureURL string) error {
+	blob, err := s.google.DownloadPicture(ctx, pictureURL)
+	if err != nil {
+		return err
+	}
+	defer blob.Body.Close()
+	ext := extFromContentType(blob.ContentType)
+	if ext == "" {
+		return nil
+	}
+	suffix, err := randomHex(8)
+	if err != nil {
+		return err
+	}
+	key := "avatars/" + u.ID.Hex() + "/" + suffix + ext
+	if err := s.oss.Upload(ctx, key, blob.Body, blob.ContentType); err != nil {
+		return err
+	}
+	_, err = s.repo.SwapAvatarKey(ctx, u.ID, key)
+	return err
+}
+
+func extFromContentType(ct string) string {
+	switch strings.ToLower(strings.SplitN(ct, ";", 2)[0]) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
 }

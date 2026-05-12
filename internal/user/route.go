@@ -10,6 +10,8 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 	g.POST("/auth/logout", h.Logout)
 	g.POST("/auth/forgot-password", h.ForgotPassword)
 	g.POST("/auth/reset-password", h.ResetPassword)
+	g.GET("/auth/google", h.GoogleStart)
+	g.GET("/auth/google/callback", h.GoogleCallback)
 
 	authed := g.Group("", auth)
 	authed.GET("/user/me", h.Me)

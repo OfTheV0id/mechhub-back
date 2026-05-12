@@ -1,7 +1,11 @@
 package user
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +16,11 @@ import (
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/response"
+)
+
+const (
+	cookieOAuthState  = "oauth_state"
+	oauthCookieMaxAge = 600
 )
 
 var allowedAvatarExt = map[string]string{
@@ -227,6 +236,73 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 		return
 	}
 	response.OK(c, UploadAvatarResp{AvatarURL: url})
+}
+
+func (h *Handler) GoogleStart(c *gin.Context) {
+	state, err := randomState()
+	if err != nil {
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+		return
+	}
+	h.setShortCookie(c, cookieOAuthState, state)
+	c.Redirect(http.StatusFound, h.svc.GoogleAuthURL(state))
+}
+
+func (h *Handler) GoogleCallback(c *gin.Context) {
+	wantState, _ := c.Cookie(cookieOAuthState)
+	gotState := c.Query("state")
+	h.setShortCookie(c, cookieOAuthState, "")
+	if wantState == "" || gotState == "" || wantState != gotState {
+		response.Fail(c, 400, response.CodeBadRequest, "invalid oauth state")
+		return
+	}
+
+	ret := h.cfg.Google.DefaultReturnURL
+	if errParam := c.Query("error"); errParam != "" {
+		c.Redirect(http.StatusFound, appendQuery(ret, "oauth_error", errParam))
+		return
+	}
+	code := c.Query("code")
+	if code == "" {
+		response.Fail(c, 400, response.CodeBadRequest, "missing code")
+		return
+	}
+
+	sess, err := h.svc.GoogleSignIn(c.Request.Context(), code)
+	if err != nil {
+		c.Redirect(http.StatusFound, appendQuery(ret, "oauth_error", "sign_in_failed"))
+		return
+	}
+	h.setSessionCookie(c, sess.ID, int(h.cfg.Session.TTL.Seconds()))
+	c.Redirect(http.StatusFound, ret)
+}
+
+func (h *Handler) setShortCookie(c *gin.Context, name, value string) {
+	maxAge := oauthCookieMaxAge
+	if value == "" {
+		maxAge = -1
+	}
+	c.SetSameSite(h.cfg.Session.CookieSameSite)
+	c.SetCookie(name, value, maxAge, "/", "", h.cfg.Session.CookieSecure, true)
+}
+
+func randomState() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func appendQuery(raw, key, value string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set(key, value)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (h *Handler) setSessionCookie(c *gin.Context, value string, maxAge int) {
