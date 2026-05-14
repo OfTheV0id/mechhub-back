@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -28,38 +29,10 @@ type Service struct {
 	agent *agent.Client
 	oss   *storage.OSS
 	cfg   *config.Config
-	hub   *Hub
 }
 
 func NewService(repo *Repo, agentClient *agent.Client, oss *storage.OSS, cfg *config.Config) *Service {
-	return &Service{repo: repo, agent: agentClient, oss: oss, cfg: cfg, hub: NewHub()}
-}
-
-func (s *Service) Hub() *Hub {
-	return s.hub
-}
-
-func (s *Service) RecoverPendingTasks(ctx context.Context) error {
-	return s.repo.MarkAllProcessingFailed(ctx)
-}
-
-func (s *Service) ListGradingTasks(ctx context.Context, conversationID, userID bson.ObjectID) ([]GradingTask, error) {
-	if _, err := s.repo.FindConversation(ctx, conversationID, userID); err != nil {
-		return nil, err
-	}
-	return s.repo.ListGradingTasks(ctx, conversationID)
-}
-
-func (s *Service) GetGradingTaskWithAnnotations(ctx context.Context, taskID, userID bson.ObjectID) (*GradingTask, []GradingAnnotation, error) {
-	t, err := s.repo.FindGradingTask(ctx, taskID, userID)
-	if err != nil {
-		return nil, nil, err
-	}
-	anns, err := s.repo.ListAnnotations(ctx, taskID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return t, anns, nil
+	return &Service{repo: repo, agent: agentClient, oss: oss, cfg: cfg}
 }
 
 var allowedMimeKind = map[string]string{
@@ -68,6 +41,7 @@ var allowedMimeKind = map[string]string{
 	"image/webp":      FileKindImage,
 	"image/gif":       FileKindImage,
 	"text/plain":      FileKindText,
+	"text/markdown":   FileKindText,
 	"application/pdf": FileKindDocument,
 }
 
@@ -151,25 +125,22 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (s *Service) openAttachmentsForAgent(ctx context.Context, files []UploadedFile) ([]agent.ImageInput, []io.Closer, error) {
-	images := make([]agent.ImageInput, 0, len(files))
+func (s *Service) openAttachmentsForAgent(ctx context.Context, files []UploadedFile) ([]agent.FileInput, []io.Closer, error) {
+	inputs := make([]agent.FileInput, 0, len(files))
 	closers := make([]io.Closer, 0, len(files))
 	for _, f := range files {
-		if f.Kind != FileKindImage {
-			continue
-		}
 		body, err := s.oss.Download(ctx, f.OSSKey)
 		if err != nil {
 			return nil, closers, err
 		}
 		closers = append(closers, body)
-		images = append(images, agent.ImageInput{
+		inputs = append(inputs, agent.FileInput{
 			Filename:    f.OriginalName,
 			ContentType: f.MimeType,
 			Body:        body,
 		})
 	}
-	return images, closers, nil
+	return inputs, closers, nil
 }
 
 func closeAll(cs []io.Closer) {
@@ -213,11 +184,46 @@ func (s *Service) DeleteConversation(ctx context.Context, id, userID bson.Object
 	return s.repo.DeleteConversation(ctx, id, userID)
 }
 
-func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.ObjectID) ([]Message, error) {
+func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.ObjectID) ([]Message, []MessageDTO, error) {
 	if _, err := s.repo.FindConversation(ctx, conversationID, userID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.repo.ListMessages(ctx, conversationID)
+	msgs, err := s.repo.ListMessages(ctx, conversationID)
+	if err != nil {
+		return nil, nil, err
+	}
+	messageIDs := make([]bson.ObjectID, len(msgs))
+	for i, m := range msgs {
+		messageIDs[i] = m.ID
+	}
+	bindings, err := s.repo.FindMessageFiles(ctx, messageIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	allFileIDs := make([]bson.ObjectID, 0)
+	for _, ids := range bindings {
+		allFileIDs = append(allFileIDs, ids...)
+	}
+	files, err := s.repo.FindFilesByIDs(ctx, allFileIDs, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	fileByID := make(map[bson.ObjectID]UploadedFile, len(files))
+	for _, f := range files {
+		fileByID[f.ID] = f
+	}
+
+	dtos := make([]MessageDTO, len(msgs))
+	for i := range msgs {
+		dto := toMessageDTO(&msgs[i])
+		for _, fid := range bindings[msgs[i].ID] {
+			if f, ok := fileByID[fid]; ok {
+				dto.Attachments = append(dto.Attachments, s.ToAttachmentDTO(&f))
+			}
+		}
+		dtos[i] = dto
+	}
+	return msgs, dtos, nil
 }
 
 func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.ObjectID, content string, attachmentIDs []bson.ObjectID) {
@@ -226,7 +232,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 
 	conv, err := s.repo.FindConversation(ctx, conversationID, userID)
 	if err != nil {
-		w.write(StreamEvent{Type: StreamAssistantError, Error: "对话不存在"})
+		w.write(StreamEvent{Type: StreamError, ErrorMsg: "对话不存在"})
 		return
 	}
 
@@ -234,11 +240,11 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 	if len(attachmentIDs) > 0 {
 		files, err = s.repo.FindFilesByIDs(ctx, attachmentIDs, userID)
 		if err != nil {
-			w.write(StreamEvent{Type: StreamAssistantError, Error: err.Error()})
+			w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 			return
 		}
 		if len(files) != len(attachmentIDs) {
-			w.write(StreamEvent{Type: StreamAssistantError, Error: "部分附件不存在或无权访问"})
+			w.write(StreamEvent{Type: StreamError, ErrorMsg: "部分附件不存在或无权访问"})
 			return
 		}
 	}
@@ -251,13 +257,12 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 		ID:             bson.NewObjectID(),
 		ConversationID: conversationID,
 		Role:           RoleUser,
-		Type:           MessageTypeText,
-		Content:        content,
+		Parts:          []MessagePart{textPart(content)},
 		Status:         MessageStatusCompleted,
 		CreatedAt:      now,
 	}
 	if err := s.repo.InsertMessage(ctx, userMsg); err != nil {
-		w.write(StreamEvent{Type: StreamAssistantError, Error: err.Error()})
+		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
 	}
 	if len(files) > 0 {
@@ -268,80 +273,58 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 		_ = s.repo.BindMessageFiles(ctx, userMsg.ID, fileIDs)
 	}
 	userDTO := toMessageDTO(userMsg)
+	for _, f := range files {
+		userDTO.Attachments = append(userDTO.Attachments, s.ToAttachmentDTO(&f))
+	}
 	w.write(StreamEvent{Type: StreamUserInput, Message: &userDTO})
 
 	assistantMsg := &Message{
 		ID:             bson.NewObjectID(),
 		ConversationID: conversationID,
 		Role:           RoleAssistant,
-		Type:           MessageTypeText,
-		Content:        "",
+		Parts:          []MessagePart{},
 		Status:         MessageStatusStreaming,
 		CreatedAt:      time.Now(),
 	}
 	if err := s.repo.InsertMessage(ctx, assistantMsg); err != nil {
-		w.write(StreamEvent{Type: StreamAssistantError, Error: err.Error()})
+		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
 	}
-	asstDTO := toMessageDTO(assistantMsg)
-	w.write(StreamEvent{Type: StreamAssistantStart, Message: &asstDTO})
 
-	images, closers, err := s.openAttachmentsForAgent(ctx, files)
+	inputs, closers, err := s.openAttachmentsForAgent(ctx, files)
 	if err != nil {
 		closeAll(closers)
-		_ = s.repo.UpdateMessageStatus(ctx, assistantMsg.ID, MessageStatusFailed, "")
-		w.write(StreamEvent{Type: StreamAssistantError, MessageID: assistantMsg.ID.Hex(), Error: err.Error()})
+		_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, MessageStatusFailed, assistantMsg.Parts, "error")
+		w.write(StreamEvent{Type: StreamError, MessageID: assistantMsg.ID.Hex(), ErrorMsg: err.Error()})
 		return
 	}
 
 	events, err := s.agent.Chat(ctx, agent.ChatRequest{
 		SessionID: conversationID.Hex(),
 		Message:   content,
-		Images:    images,
+		Files:     inputs,
 	})
 	closeAll(closers)
 	if err != nil {
-		_ = s.repo.UpdateMessageStatus(ctx, assistantMsg.ID, MessageStatusFailed, "")
-		w.write(StreamEvent{Type: StreamAssistantError, MessageID: assistantMsg.ID.Hex(), Error: err.Error()})
+		_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, MessageStatusFailed, assistantMsg.Parts, "error")
+		w.write(StreamEvent{Type: StreamError, MessageID: assistantMsg.ID.Hex(), ErrorMsg: err.Error()})
 		return
 	}
 
-	var buf strings.Builder
-	var streamErr string
-	for ev := range events {
-		switch ev.Type {
-		case agent.EventText:
-			if ev.Content == "" {
-				continue
-			}
-			buf.WriteString(ev.Content)
-			w.write(StreamEvent{Type: StreamAssistantDelta, MessageID: assistantMsg.ID.Hex(), Delta: ev.Content})
-		case agent.EventError:
-			streamErr = ev.Message
-			if streamErr == "" {
-				streamErr = "agent error"
-			}
-		}
-	}
-
+	parts, finishReason, streamErr := s.consumeAgentStream(events, assistantMsg.ID.Hex(), w)
+	status := MessageStatusCompleted
 	if streamErr != "" {
-		_ = s.repo.UpdateMessageStatus(ctx, assistantMsg.ID, MessageStatusFailed, buf.String())
-		w.write(StreamEvent{Type: StreamAssistantError, MessageID: assistantMsg.ID.Hex(), Error: streamErr})
-		return
+		status = MessageStatusFailed
 	}
-
-	finalContent := buf.String()
-	if err := s.repo.UpdateMessageStatus(ctx, assistantMsg.ID, MessageStatusCompleted, finalContent); err != nil {
-		w.write(StreamEvent{Type: StreamAssistantError, MessageID: assistantMsg.ID.Hex(), Error: err.Error()})
-		return
-	}
-	assistantMsg.Status = MessageStatusCompleted
-	assistantMsg.Content = finalContent
+	assistantMsg.Parts = parts
+	assistantMsg.Status = status
+	assistantMsg.FinishReason = finishReason
+	_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, status, parts, finishReason)
 
 	if isFirstMessage {
 		title := autoTitle(content)
 		if title != "" {
-			_ = s.repo.UpdateConversationTitle(ctx, conversationID, userID, title)
+			_ = s.repo.UpdateConversationTitle(context.Background(), conversationID, userID, title)
 			conv.Title = title
 			conv.UpdatedAt = time.Now()
 			dto := toConversationDTO(conv)
@@ -350,9 +333,110 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 	} else {
 		_ = s.repo.TouchConversation(ctx, conversationID)
 	}
+}
 
-	doneDTO := toMessageDTO(assistantMsg)
-	w.write(StreamEvent{Type: StreamAssistantDone, Message: &doneDTO})
+func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string, w *ndjsonWriter) ([]MessagePart, string, string) {
+	parts := make([]MessagePart, 0, 8)
+	finishReason := "stop"
+	streamErr := ""
+
+	var prevKind string
+	var textBuf strings.Builder
+	var thinkBuf strings.Builder
+
+	flushBuffers := func() {
+		if textBuf.Len() > 0 {
+			parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
+			textBuf.Reset()
+		}
+		if thinkBuf.Len() > 0 {
+			parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
+			thinkBuf.Reset()
+		}
+		prevKind = ""
+	}
+
+	for ev := range events {
+		ev.MessageID = messageID
+		switch ev.Type {
+		case agent.EventMessageStart:
+			w.write(StreamEvent{Type: StreamMessageStart, MessageID: messageID, Model: ev.Model})
+		case agent.EventReasoningDelta:
+			if prevKind == "text" {
+				if textBuf.Len() > 0 {
+					parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
+					textBuf.Reset()
+				}
+			}
+			thinkBuf.WriteString(ev.Delta)
+			prevKind = "thinking"
+			w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: messageID, Delta: ev.Delta})
+		case agent.EventTextDelta:
+			if prevKind == "thinking" {
+				if thinkBuf.Len() > 0 {
+					parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
+					thinkBuf.Reset()
+				}
+			}
+			textBuf.WriteString(ev.Delta)
+			prevKind = "text"
+			w.write(StreamEvent{Type: StreamTextDelta, MessageID: messageID, Delta: ev.Delta})
+		case agent.EventTextComplete:
+			if ev.Text != "" {
+				textBuf.Reset()
+				textBuf.WriteString(ev.Text)
+			}
+			if textBuf.Len() > 0 {
+				parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
+				textBuf.Reset()
+			}
+			prevKind = ""
+			w.write(StreamEvent{Type: StreamTextComplete, MessageID: messageID, Text: ev.Text})
+		case agent.EventToolCallStart:
+			flushBuffers()
+			parts = append(parts, MessagePart{
+				Type:      PartToolUse,
+				ToolUseID: ev.ToolUseID,
+				Name:      ev.Name,
+				Input:     cloneRaw(ev.Input),
+			})
+			w.write(StreamEvent{Type: StreamToolCallStart, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Input: ev.Input})
+		case agent.EventToolResult:
+			parts = append(parts, MessagePart{
+				Type:      PartToolResult,
+				ToolUseID: ev.ToolUseID,
+				Name:      ev.Name,
+				Output:    cloneRaw(ev.Output),
+				IsError:   ev.IsError,
+				ElapsedMS: ev.ElapsedMS,
+			})
+			w.write(StreamEvent{Type: StreamToolResult, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Output: ev.Output, IsError: ev.IsError, ElapsedMS: ev.ElapsedMS})
+		case agent.EventError:
+			streamErr = ev.Message
+			if streamErr == "" {
+				streamErr = "agent error"
+			}
+			finishReason = "error"
+			w.write(StreamEvent{Type: StreamError, MessageID: messageID, Code: ev.Code, ErrorMsg: streamErr})
+		case agent.EventMessageDone:
+			flushBuffers()
+			if ev.FinishReason != "" {
+				finishReason = ev.FinishReason
+			}
+			w.write(StreamEvent{Type: StreamMessageDone, MessageID: messageID, FinishReason: finishReason})
+		}
+	}
+	flushBuffers()
+	return parts, finishReason, streamErr
+}
+
+func cloneRaw(r json.RawMessage) json.RawMessage {
+	if len(r) == 0 {
+		return nil
+	}
+	out := make(json.RawMessage, len(r))
+	copy(out, r)
+	return out
 }
 
 func autoTitle(firstMessage string) string {
@@ -366,4 +450,3 @@ func autoTitle(firstMessage string) string {
 	}
 	return t
 }
-

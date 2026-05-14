@@ -48,7 +48,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (<-chan Event, error
 		return nil, fmt.Errorf("agent: status %d", resp.StatusCode)
 	}
 
-	out := make(chan Event, 16)
+	out := make(chan Event, 32)
 	go parseSSE(resp.Body, out)
 	return out, nil
 }
@@ -64,17 +64,17 @@ func buildMultipart(req ChatRequest) (io.Reader, string, error) {
 		return nil, "", err
 	}
 
-	for _, img := range req.Images {
+	for _, f := range req.Files {
 		h := make(textproto.MIMEHeader)
-		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="images"; filename="%s"`, img.Filename))
-		if img.ContentType != "" {
-			h.Set("Content-Type", img.ContentType)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename="%s"`, f.Filename))
+		if f.ContentType != "" {
+			h.Set("Content-Type", f.ContentType)
 		}
 		part, err := w.CreatePart(h)
 		if err != nil {
 			return nil, "", err
 		}
-		if _, err := io.Copy(part, img.Body); err != nil {
+		if _, err := io.Copy(part, f.Body); err != nil {
 			return nil, "", err
 		}
 	}
@@ -102,7 +102,7 @@ func parseSSE(body io.ReadCloser, out chan<- Event) {
 			continue
 		}
 		out <- ev
-		if ev.Type == EventDone {
+		if ev.Type == EventMessageDone {
 			return
 		}
 	}

@@ -6,7 +6,7 @@
 
 `mechhub-back` 是一个 Go 后端,现已完成:
 - **用户系统**:注册 / 邮箱激活 / role 双轨(student / teacher,后者由 admin 审批) / 登录 / 登出 / 找回密码 / 改密 / 资料 / 头像 / Google OAuth
-- **Solochat 模块**:对话 / 消息(NDJSON 流式) / 批改任务(SSE 进度) / 附件,**调用 `mechhub-agent` Python ADK 服务做实际 AI 工作**
+- **Solochat 模块**:通用 agent 对话,前端可见 thinking + 工具调用 + 工具结果。**调用 `mechhub-agent` Python ADK 服务做实际 LLM 工作**。批改不再是独立功能,是 agent 自主调用 `grade_submission` 工具的一个特例
 - **Docker 化**:父目录 `mechhub/docker-compose.yml` 起 go-backend + agent + mongo 三服务
 
 ## 必读的两份文档
@@ -42,16 +42,35 @@ GET    /api/solochat/conversations                          列对话(updated_at
 POST   /api/solochat/conversations                          建对话
 PATCH  /api/solochat/conversations/:id                      改标题
 DELETE /api/solochat/conversations/:id                      删对话 + 所有消息
-GET    /api/solochat/conversations/:id/messages             列消息(created_at asc)
-POST   /api/solochat/conversations/:id/messages/stream      发消息,NDJSON 流式
-GET    /api/solochat/conversations/:id/grading-tasks        列批改任务
-POST   /api/solochat/conversations/:id/grading-tasks        建批改任务(NDJSON 起步,异步执行)
-GET    /api/solochat/grading-tasks/:id                      任务详情 + annotations
-POST   /api/solochat/grading-tasks/:id/retry                重试
-GET    /api/solochat/grading-tasks/:id/events               SSE 订阅进度
-POST   /api/solochat/attachments                            multipart 上传附件
+GET    /api/solochat/conversations/:id/messages             列消息(created_at asc),每条带 parts[] + attachments[]
+POST   /api/solochat/conversations/:id/messages/stream      发消息,NDJSON 流式(10 种事件,见下)
+POST   /api/solochat/attachments                            multipart 上传附件(image/pdf/text/markdown)
 GET    /api/solochat/attachments/:id                        302 跳 OSS 公开 URL
 ```
+
+### Solochat NDJSON 事件协议(轮 4 重构后,与 mechhub-agent SSE 1:1 对齐)
+
+`POST /messages/stream` 响应,每行一个 JSON,`type` 判别。典型时序:
+
+```
+user_input → message_start → reasoning_delta* → tool_call_start
+  → tool_result → text_delta* → text_complete → message_done
+```
+
+| 事件 | 字段 | 用途 |
+|---|---|---|
+| `user_input` | `message: MessageDTO` (含 attachments[]) | Go 持久化用户消息后立即发,前端乐观 UI 对齐 |
+| `message_start` | `message_id, model` | Agent 回合开始 |
+| `reasoning_delta` | `message_id, delta` | 思考过程流(可折叠展示) |
+| `text_delta` | `message_id, delta` | 文本块流式追加 |
+| `text_complete` | `message_id, text` | 当前文本块结束(完整最终文本) |
+| `tool_call_start` | `message_id, tool_use_id, name, input` | LLM 调用工具,完整入参 |
+| `tool_result` | `message_id, tool_use_id, output, is_error, elapsed_ms` | 工具返回(包括完整 GradingOutput) |
+| `conversation_title` | `conversation: ConversationDTO` | 首条消息后自动命名 |
+| `error` | `message_id, code, error` | 异常 |
+| `message_done` | `message_id, finish_reason` | Agent 回合结束 |
+
+Message 持久化为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `tool_use` / `tool_result`。`GET /messages` 返回这些 parts,前端按数组顺序逐块渲染。
 
 ### 关键技术决策
 
@@ -127,36 +146,30 @@ GET    /api/solochat/attachments/:id                        302 跳 OSS 公开 U
 - "Authorized redirect URIs" 必须包含 `GOOGLE_REDIRECT_URL` 的值(开发是 `http://localhost:8080/api/auth/google/callback`)
 - scopes 默认 `openid email profile`,后端代码里硬编码
 
-### 4. Solochat:复刻 miniback 架构 + Go 调 Python agent
-
-设计 = `Mechhub-miniback` 的 solochat 在 Go + MongoDB 上的翻版,**经过实际使用验证质量良好**,直接复用避免重新设计成本。
+### 4. Solochat:通用 agent chat(轮 4 重构)
 
 **职责划分**:
-- **Go 后端**:权限、会话、消息持久化、流式协议、附件存储编排
-- **Python agent** (`mechhub-agent`, FastAPI):实际 LLM / OCR / 批改逻辑,通过 `POST /chat`(multipart + SSE)对外
+- **Go 后端**:权限、会话、消息持久化(`Message.Parts []MessagePart`)、流式协议翻译、附件存储编排
+- **Python agent** (`mechhub-agent`, FastAPI + Google ADK):LLM 推理 + 工具调用,通过 `POST /chat`(multipart + SSE)对外。当前模型 `openai/qwen3.6-max-preview`,通过 LiteLlm 的 `extra_body={"enable_thinking": True}` 让 qwen 输出思考过程
 - Go ↔ agent 用 HTTP,Docker Compose 内部 `http://agent:8001` 直连
 
-**为什么不在 Go 里跑 ADK**:Google ADK 只有 Python SDK,Go 没有等价 SDK。所以只能 Python 当微服务。
+**为什么不在 Go 里跑 ADK**:Google ADK 只有 Python SDK。
 
 **关键代码位置**:
-- `internal/agent/`:HTTP 客户端,SSE 解析(每帧 `data: <json>\n\n`,没有 event 行)
-- `internal/solochat/`:8 个文件(model/repo/service/handler/route/streamer/grading/events_hub)
-- `internal/solochat/events_hub.go`:**内存** pub/sub,任务异步执行时把状态推给所有 SSE 订阅者。**服务重启就丢**——配合启动时 `MarkAllProcessingFailed` 把孤儿任务标 failed
-- `internal/solochat/streamer.go`:`newNDJSON()` 和 `newSSE()` helper
+- `internal/agent/{model,client}.go`:HTTP 客户端 + SSE 解析,`Event` 字段覆盖所有 8 种类型
+- `internal/solochat/`:6 个文件(model/repo/service/handler/route/streamer)。**`grading.go` 和 `events_hub.go` 已删除**
+- `internal/solochat/service.go::consumeAgentStream`:核心翻译循环,把 agent SSE 事件 1:1 写成 NDJSON 给前端,同时累积到 `Message.Parts` 落库
+- `mechhub-agent/server/sse.py::stream_chat`:Python 端统一生成器,把 ADK 事件流 + tool callback 队列合并发出
+- `mechhub-agent/mechhub_agent/callbacks.py`:`before/after_tool_callback` 通过 `contextvars.ContextVar` 拿到本次请求的 `asyncio.Queue`,把 `tool_call_start` / `tool_result` 入队
+- `mechhub-agent/mechhub_agent/agent.py::_build_model`:控制 `enable_thinking` 开关
 
-**NDJSON 协议**(消息流):一行一个 JSON,`type` discriminator(`user_input` / `assistant_start` / `assistant_delta` / `conversation_title` / `assistant_done` / `assistant_error` / `grading_start`)。
+**事件协议**:见上文"已开放的接口"段的 NDJSON 事件表。Python SSE → Go NDJSON 是 1:1 透传 + 加 `user_input` / `conversation_title` 两个 Go-only 事件。
 
-**SSE 协议**(批改进度):标准 `event: <name>\ndata: <json>\n\n` + 每 25s 一行 `: ping` 心跳。
+**附件流转**:前端 → multipart 上传到 Go → Go 写 OSS → DB 存 key → 发消息时 Go 下载 OSS → multipart 转给 agent(字段名 `files`,所有 MIME 都转)→ Python 落到 tempdir,把路径拼到 user message 文本里给 LLM。**Go 是中间人,Python 不直接访问 OSS**(用户 OSS AK 不出 Go)。
 
-**附件流转**(grading):前端 → multipart 上传到 Go → Go 写 OSS → DB 存 key → 发批改时 Go 下载 OSS → multipart 转给 agent → agent 用图。**Go 是中间人,Python 不直接访问 OSS**(用户 OSS AK 不出 Go)。
+**批改不是独立功能**:LLM 自主决定何时调 `grade_submission(image_paths)` 工具。工具会自动用 OCR 缓存(本次 session state),返回完整 `GradingOutput` JSON。前端从对应 `tool_result.output` 渲染分数 + 评语 + 步骤分析。**`/grading-tasks/*` 端点已经全部下线**。
 
-**已知 gap(agent 端需扩展)**:
-- 当前 Python agent 的 SSE **不输出结构化 GradingOutput**(只输出 LLM 文本 + tool_done summary)
-- 所以 `solochat_grading_annotations` 集合**目前是空的**,UI 只能展示 overall_score(从 summary 解析)+ overall_comment(LLM 文本)
-- 接下来 agent 端要加一个 `grading_result` SSE 事件类型,带完整 `GradingOutput` JSON。Go 端 `internal/solochat/grading.go::runGradingTask` 的 events 循环里加 case 解析并批量 InsertMany 到 annotations
-- 这是 agent 团队的活,不是 Go 后端
-
-**agent session 持久化**:agent 当前 in-memory session,重启丢。所以 Go 端每次都重传图片。流量大了再优化(把 OCR 结果缓存在 mongo 而不是 agent 进程内)。
+**agent session 持久化**:agent 当前 in-memory session,重启丢。所以 Go 端每次都重传文件。后续可以把 OCR 缓存搬到 mongo,但暂时 OK。
 
 ### 5. 改密 / 重置密码后所有 session 失效
 
@@ -298,8 +311,11 @@ GOOGLE_DEFAULT_RETURN_URL=https://mechhub.oftheloneliness.cn
 ## 项目当前状态
 
 - `go build ./...` 通过。
-- 用户已实测跑通完整流程:注册 → 验证 → 登录 → me → 修改 name → 上传头像 → 改密码 → 找回密码。
-- 所有 Postman 请求都验证过(Spec Hub 格式,VCS 友好)。
-- 没有任何已知 bug。
+- 用户已实测跑通用户系统完整流程(注册 → 验证 → 登录 → me → 修改 name → 上传头像 → 改密码 → 找回密码)。
+- 轮 4 重构(通用 agent chat)**未实测**,**编码前的三个验证项还没做**:
+  1. qwen 通过 LiteLlm + `extra_body={"enable_thinking": True}` 是否真能把 thought parts 透出
+  2. ADK callback 在 async 上下文还是工作线程跑(影响 `put_nowait` 是否安全)
+  3. ADK `function_call` 事件粒度(协议留了 `tool_call_delta` 占位但当前不发)
+- 启动新版后端时必须先把 `SOLOCHAT_MIGRATE_DROP_GRADING=true` 设一次,drop 掉旧的三张 grading 表,然后改回 false。
 
 接下来等用户提新需求。Good luck.

@@ -13,24 +13,18 @@ import (
 var ErrNotFound = errors.New("solochat: not found")
 
 type Repo struct {
-	conversations    *mongo.Collection
-	messages         *mongo.Collection
-	files            *mongo.Collection
-	messageFiles     *mongo.Collection
-	gradingTasks     *mongo.Collection
-	gradingTaskFiles *mongo.Collection
-	annotations      *mongo.Collection
+	conversations *mongo.Collection
+	messages      *mongo.Collection
+	files         *mongo.Collection
+	messageFiles  *mongo.Collection
 }
 
 func NewRepo(db *mongo.Database) *Repo {
 	return &Repo{
-		conversations:    db.Collection("solochat_conversations"),
-		messages:         db.Collection("solochat_messages"),
-		files:            db.Collection("uploaded_files"),
-		messageFiles:     db.Collection("solochat_message_files"),
-		gradingTasks:     db.Collection("solochat_grading_tasks"),
-		gradingTaskFiles: db.Collection("solochat_grading_task_files"),
-		annotations:      db.Collection("solochat_grading_annotations"),
+		conversations: db.Collection("solochat_conversations"),
+		messages:      db.Collection("solochat_messages"),
+		files:         db.Collection("uploaded_files"),
+		messageFiles:  db.Collection("solochat_message_files"),
 	}
 }
 
@@ -122,28 +116,16 @@ func (r *Repo) ListMessages(ctx context.Context, conversationID bson.ObjectID) (
 	return list, nil
 }
 
-func (r *Repo) ListRecentMessages(ctx context.Context, conversationID bson.ObjectID, limit int) ([]Message, error) {
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit))
-	cur, err := r.messages.Find(ctx, bson.M{"conversation_id": conversationID}, opts)
-	if err != nil {
-		return nil, err
-	}
-	var list []Message
-	if err := cur.All(ctx, &list); err != nil {
-		return nil, err
-	}
-	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
-		list[i], list[j] = list[j], list[i]
-	}
-	return list, nil
-}
-
-func (r *Repo) UpdateMessageStatus(ctx context.Context, id bson.ObjectID, status, content string) error {
-	update := bson.M{"$set": bson.M{"status": status}}
-	if content != "" {
-		update["$set"].(bson.M)["content"] = content
-	}
-	_, err := r.messages.UpdateOne(ctx, bson.M{"_id": id}, update)
+func (r *Repo) FinalizeMessage(ctx context.Context, id bson.ObjectID, status string, parts []MessagePart, finishReason string) error {
+	_, err := r.messages.UpdateOne(
+		ctx,
+		bson.M{"_id": id},
+		bson.M{"$set": bson.M{
+			"status":        status,
+			"parts":         parts,
+			"finish_reason": finishReason,
+		}},
+	)
 	return err
 }
 
@@ -191,87 +173,21 @@ func (r *Repo) BindMessageFiles(ctx context.Context, messageID bson.ObjectID, fi
 	return err
 }
 
-func (r *Repo) InsertGradingTask(ctx context.Context, t *GradingTask) error {
-	_, err := r.gradingTasks.InsertOne(ctx, t)
-	return err
-}
-
-func (r *Repo) FindGradingTask(ctx context.Context, id, userID bson.ObjectID) (*GradingTask, error) {
-	var t GradingTask
-	err := r.gradingTasks.FindOne(ctx, bson.M{"_id": id, "user_id": userID}).Decode(&t)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, ErrNotFound
+func (r *Repo) FindMessageFiles(ctx context.Context, messageIDs []bson.ObjectID) (map[bson.ObjectID][]bson.ObjectID, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
 	}
+	cur, err := r.messageFiles.Find(ctx, bson.M{"message_id": bson.M{"$in": messageIDs}})
 	if err != nil {
 		return nil, err
 	}
-	return &t, nil
-}
-
-func (r *Repo) ListGradingTasks(ctx context.Context, conversationID bson.ObjectID) ([]GradingTask, error) {
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	cur, err := r.gradingTasks.Find(ctx, bson.M{"conversation_id": conversationID}, opts)
-	if err != nil {
+	var binds []MessageFile
+	if err := cur.All(ctx, &binds); err != nil {
 		return nil, err
 	}
-	var list []GradingTask
-	if err := cur.All(ctx, &list); err != nil {
-		return nil, err
+	out := make(map[bson.ObjectID][]bson.ObjectID, len(binds))
+	for _, b := range binds {
+		out[b.MessageID] = append(out[b.MessageID], b.FileID)
 	}
-	return list, nil
-}
-
-func (r *Repo) UpdateGradingTask(ctx context.Context, id bson.ObjectID, update bson.M) error {
-	update["updated_at"] = time.Now()
-	_, err := r.gradingTasks.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": update})
-	return err
-}
-
-func (r *Repo) MarkAllProcessingFailed(ctx context.Context) error {
-	_, err := r.gradingTasks.UpdateMany(
-		ctx,
-		bson.M{"status": TaskStatusProcessing},
-		bson.M{"$set": bson.M{
-			"status":        TaskStatusFailed,
-			"error_message": "服务重启,任务中断",
-			"updated_at":    time.Now(),
-		}},
-	)
-	return err
-}
-
-func (r *Repo) BindGradingTaskFiles(ctx context.Context, taskID bson.ObjectID, fileIDs []bson.ObjectID, role string) error {
-	if len(fileIDs) == 0 {
-		return nil
-	}
-	docs := make([]any, len(fileIDs))
-	for i, fid := range fileIDs {
-		docs[i] = GradingTaskFile{ID: bson.NewObjectID(), TaskID: taskID, FileID: fid, Role: role}
-	}
-	_, err := r.gradingTaskFiles.InsertMany(ctx, docs)
-	return err
-}
-
-func (r *Repo) ListAnnotations(ctx context.Context, taskID bson.ObjectID) ([]GradingAnnotation, error) {
-	cur, err := r.annotations.Find(ctx, bson.M{"task_id": taskID})
-	if err != nil {
-		return nil, err
-	}
-	var list []GradingAnnotation
-	if err := cur.All(ctx, &list); err != nil {
-		return nil, err
-	}
-	return list, nil
-}
-
-func (r *Repo) InsertAnnotations(ctx context.Context, anns []GradingAnnotation) error {
-	if len(anns) == 0 {
-		return nil
-	}
-	docs := make([]any, len(anns))
-	for i := range anns {
-		docs[i] = anns[i]
-	}
-	_, err := r.annotations.InsertMany(ctx, docs)
-	return err
+	return out, nil
 }

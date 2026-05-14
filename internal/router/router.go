@@ -1,9 +1,6 @@
 package router
 
 import (
-	"context"
-	"log"
-
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 
@@ -36,9 +33,6 @@ func New(cfg *config.Config, db *mongo.Database, sessions *session.Store, mailer
 
 	solochatRepo := solochat.NewRepo(db)
 	solochatSvc := solochat.NewService(solochatRepo, agentClient, oss, cfg)
-	if err := solochatSvc.RecoverPendingTasks(context.Background()); err != nil {
-		log.Printf("solochat recover: %v", err)
-	}
 	solochatHandler := solochat.NewHandler(solochatSvc)
 	solochat.Mount(api, solochatHandler, auth)
 

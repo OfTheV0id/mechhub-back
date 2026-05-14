@@ -2,15 +2,29 @@ $kind: http-request
 name: Send message stream
 description: >-
   Send a user message to a conversation. Responds with
-  `application/x-ndjson` — one JSON event per line:
+  `application/x-ndjson` — one JSON event per line.
 
 
-  - `user_input`        — the user message just stored
-  - `assistant_start`   — the assistant message stub (status=streaming)
-  - `assistant_delta`   — text chunks as the LLM streams
-  - `conversation_title` — emitted only on the very first message (auto-named)
-  - `assistant_done`    — final message (status=completed)
-  - `assistant_error`   — on failure (status=failed)
+  ## NDJSON event types
+
+
+  - `user_input`         — user message just stored (with `attachments[]`)
+  - `message_start`      — assistant turn begins (`message_id`, `model`)
+  - `reasoning_delta`    — model's thinking trace, streamed token by token
+  - `text_delta`         — assistant text chunk
+  - `text_complete`      — text block finished (`text` is the full final text)
+  - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON)
+  - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`)
+  - `conversation_title` — only on the very first message (auto-named)
+  - `error`              — agent or backend error
+  - `message_done`       — assistant turn ended (`finish_reason`)
+
+
+  Typical sequence for an answer that uses a tool:
+  ```
+  user_input → message_start → reasoning_delta* → tool_call_start
+    → tool_result → text_delta* → text_complete → message_done
+  ```
 
 
   Postman renders NDJSON line-by-line in the response body.
@@ -23,6 +37,7 @@ body:
   type: json
   content: |-
     {
-      "content": "你好,请介绍下自己"
+      "content": "你好,请介绍下自己",
+      "attachments": []
     }
 order: 2100

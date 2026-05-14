@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"log"
+	"os"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -73,25 +76,25 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	if _, err := db.Collection("solochat_grading_tasks").Indexes().CreateMany(ctx, []mongo.IndexModel{
-		{Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}}},
-		{Keys: bson.D{{Key: "user_id", Value: 1}}},
-		{Keys: bson.D{{Key: "status", Value: 1}}},
-	}); err != nil {
-		return err
-	}
+	return nil
+}
 
-	if _, err := db.Collection("solochat_grading_task_files").Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "task_id", Value: 1}},
-	}); err != nil {
-		return err
+// MaybeDropLegacyGradingCollections 在 SOLOCHAT_MIGRATE_DROP_GRADING=true 时
+// 把旧的批改专属集合一次性删掉。轮 4 重构后 grading 并入通用 chat 流,
+// 这三张表不再使用。线上首次部署后,把 env 改回 false / 移除即可。
+func MaybeDropLegacyGradingCollections(ctx context.Context, db *mongo.Database) error {
+	if strings.ToLower(os.Getenv("SOLOCHAT_MIGRATE_DROP_GRADING")) != "true" {
+		return nil
 	}
-
-	if _, err := db.Collection("solochat_grading_annotations").Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "task_id", Value: 1}},
-	}); err != nil {
-		return err
+	for _, name := range []string{
+		"solochat_grading_tasks",
+		"solochat_grading_task_files",
+		"solochat_grading_annotations",
+	} {
+		if err := db.Collection(name).Drop(ctx); err != nil {
+			return err
+		}
+		log.Printf("dropped legacy collection: %s", name)
 	}
-
 	return nil
 }

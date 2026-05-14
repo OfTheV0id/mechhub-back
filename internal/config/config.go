@@ -88,7 +88,6 @@ type AgentConfig struct {
 type SolochatConfig struct {
 	MaxAttachmentsPerMessage int
 	MaxFileSize              int64
-	HistoryReplayLimit       int
 }
 
 func Load() *Config {
@@ -148,7 +147,6 @@ func Load() *Config {
 		Solochat: SolochatConfig{
 			MaxAttachmentsPerMessage: getInt("SOLOCHAT_MAX_ATTACHMENTS_PER_MESSAGE", 4),
 			MaxFileSize:              int64(getInt("SOLOCHAT_MAX_FILE_SIZE_BYTES", 20*1024*1024)),
-			HistoryReplayLimit:       getInt("SOLOCHAT_HISTORY_REPLAY_LIMIT", 20),
 		},
 	}
 	return cfg

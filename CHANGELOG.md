@@ -9,6 +9,68 @@
 
 ---
 
+## Claude 轮 4 — 2026-05-14 — Solochat 重构为通用 agent chat,前端可见 thinking + tool
+
+把 grading 从独立路径并入通用对话流,前端从此能渲染 agent 的思考过程 + 工具调用 + 工具结果。
+
+### ⚠️ 破坏性变更(前端 / Postman / DB 全部需要跟改)
+
+1. **`POST /messages/stream` 事件协议完全更换**
+   - **旧** 6 种: `user_input` / `assistant_start` / `assistant_delta` / `assistant_done` / `assistant_error` / `conversation_title`
+   - **新** 10 种(典型时序):
+     ```
+     user_input → message_start → reasoning_delta* → tool_call_start
+       → tool_result → text_delta* → text_complete → message_done
+     ```
+     额外: `error`、`conversation_title`(只在首条消息)
+   - 前端需要按 `type` 分别渲染:`reasoning_delta` 进思考折叠区,`tool_call_start` + `tool_result` 配对渲染成工具调用块,`text_delta` 流式追加到当前文本块
+   - `assistant_delta` 不再发,改用 `text_delta`;`assistant_done` 不再发,改用 `message_done`(包含 `finish_reason`)
+   - 错误事件字段:`{type:"error", code, error}`,以前是 `assistant_error`
+
+2. **`Message.Content string` 字段消失,改为 `Message.Parts []MessagePart`**
+   - 每个 part 类型: `text` / `thinking` / `tool_use` / `tool_result`
+   - 前端 `GET /messages` 拿到的每条 message 现在是 `parts[]`,按数组顺序逐块渲染
+   - DB 层 `solochat_messages` 文档 schema 改变 —— **历史消息不做迁移**(单人开发,无生产用户)
+
+3. **`/api/solochat/grading-tasks/*` 全部 5 个端点下线**
+   - `GET/POST /conversations/:id/grading-tasks` / `GET /grading-tasks/:id` / `POST /grading-tasks/:id/retry` / `GET /grading-tasks/:id/events`(SSE)全部删除
+   - 批改不再是独立功能。用户上传作业图片后,agent 自主决定是否调用 `grade_submission` 工具,完整 `GradingOutput` 通过 `tool_result.output` 字段返回给前端
+   - 前端原批改页 UI 改为从消息流里识别 `tool_use.name == "grade_submission"` 的块,从对应的 `tool_result.output` 渲染分数 + 评语 + 步骤分析
+
+4. **Mongo 三张表废弃**: `solochat_grading_tasks` / `solochat_grading_task_files` / `solochat_grading_annotations`
+   - 启动时设 `SOLOCHAT_MIGRATE_DROP_GRADING=true` 让后端在 `EnsureIndexes` 后一次性 drop 这三张表(`internal/db/mongo.go::MaybeDropLegacyGradingCollections`),drop 完改回 false
+
+5. **附件 MIME 白名单放开** —— Go 把所有附件转给 Python(不再只过滤 image)。Python 端 `server/upload.py::ALLOWED_MIMES` 新增 `text/markdown`
+
+6. **env 删除**: `SOLOCHAT_HISTORY_REPLAY_LIMIT`(从未被代码引用,清理掉)
+   **env 新增**: `SOLOCHAT_MIGRATE_DROP_GRADING`(一次性迁移开关)
+
+### 功能新增
+
+7. **思考过程可见** —— `mechhub-agent` 的 LiteLlm 默认传 `extra_body={"enable_thinking": True}`(`mechhub_agent/agent.py::_build_model`),让 qwen 把推理过程作为 `thought=True` 的 part 返回,server/sse.py 转成 `reasoning_delta` SSE 事件,Go 端再 1:1 转 NDJSON,前端可流式展示。`AGENT_ENABLE_THINKING=false` 可关。
+
+8. **工具调用可见** —— Python 端 `before_tool_callback` / `after_tool_callback` 通过 contextvar 把 `tool_call_start` / `tool_result` 事件入队(`mechhub_agent/callbacks.py`),server/sse.py 把队列和 ADK 事件流合并发出,Go 端 1:1 转发。每次 tool 调用前端能看到工具名 + 完整入参 + 完整结果 + 耗时。
+
+9. **ADK 真流式** —— `server/runner.py::get_run_config` 默认开启 `RunConfig(streaming_mode=StreamingMode.SSE)`,LLM 文字按 token 增量回来,前端看到的就是真正逐字流式。
+
+10. **附件存到消息上** —— `GET /messages` 返回的 `MessageDTO.attachments[]` 包含完整 AttachmentDTO 列表(以前要客户端拼)
+
+### 删除
+
+- `internal/solochat/grading.go`(258 行,grading 异步任务编排)
+- `internal/solochat/events_hub.go`(63 行,grading 专用 pub/sub)
+- `internal/solochat/streamer.go::newSSE` + 心跳逻辑(grading 走完后不再需要 SSE)
+- `mechhub_agent/tools/grader.py::grade_with_ocr` → 改名 `grade_submission`,删除"必须先 OCR"硬校验(交给 LLM 自主决定)
+- Postman 路径 `solochat/grading-tasks/*` 全部 5 个 yaml + 根集合 `taskId` 变量
+
+### 编码前需验证的假设
+
+- qwen3.6-max-preview 通过 LiteLlm + DashScope OpenAI-兼容端点 + `extra_body={"enable_thinking": True}` 能否把 thought parts 透出 —— 没透出就降级到 `AGENT_ENABLE_THINKING=false`
+- ADK callback 在 async 上下文执行(目前 `queue.put_nowait` 假设是 async 同线程,若实际是工作线程需要改 `run_coroutine_threadsafe`)
+- ADK `function_call` 事件粒度 —— 协议留了 `tool_call_delta` 但目前不发,因为 ADK 一次性给完整 args
+
+---
+
 ## Claude 轮 3 — 2026-05-13 — Solochat 模块 + Python Agent 对接 + Docker 化
 
 ### 功能新增
