@@ -1,0 +1,25 @@
+$kind: http-request
+name: Subscribe grading events
+description: >-
+  SSE (Server-Sent Events) subscription for live grading progress.
+
+
+  Frame types:
+
+  - `event: ready` — connection established
+
+  - `event: grading_status` — status snapshot (pending/processing/completed/failed)
+
+  - `event: grading_annotation` — single annotation as it's created (future)
+
+  - `: ping` — heartbeat every 25s
+
+
+  Connection closes automatically when the task reaches a terminal
+  state (completed / failed). Postman shows the live stream in the
+  response panel.
+url: "{{baseUrl}}/api/solochat/grading-tasks/{{taskId}}/events"
+method: GET
+headers:
+  Accept: text/event-stream
+order: 4400

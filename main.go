@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
 	"mechhub-back/internal/mail"
@@ -32,8 +33,9 @@ func main() {
 		log.Fatalf("oss init: %v", err)
 	}
 	google := oauth.NewGoogle(cfg.Google)
+	agentClient := agent.NewClient(cfg.Agent)
 
-	r := router.New(cfg, mongoDB, sessions, mailer, oss, google)
+	r := router.New(cfg, mongoDB, sessions, mailer, oss, google, agentClient)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

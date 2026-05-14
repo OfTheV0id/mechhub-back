@@ -48,5 +48,50 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 	}); err != nil {
 		return err
 	}
+
+	if _, err := db.Collection("solochat_conversations").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "updated_at", Value: -1}}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("solochat_messages").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("uploaded_files").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "owner_user_id", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("solochat_message_files").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "message_id", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("solochat_grading_tasks").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		{Keys: bson.D{{Key: "status", Value: 1}}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("solochat_grading_task_files").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "task_id", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := db.Collection("solochat_grading_annotations").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "task_id", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
 	return nil
 }

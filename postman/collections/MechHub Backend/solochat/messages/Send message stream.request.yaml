@@ -1,0 +1,28 @@
+$kind: http-request
+name: Send message stream
+description: >-
+  Send a user message to a conversation. Responds with
+  `application/x-ndjson` — one JSON event per line:
+
+
+  - `user_input`        — the user message just stored
+  - `assistant_start`   — the assistant message stub (status=streaming)
+  - `assistant_delta`   — text chunks as the LLM streams
+  - `conversation_title` — emitted only on the very first message (auto-named)
+  - `assistant_done`    — final message (status=completed)
+  - `assistant_error`   — on failure (status=failed)
+
+
+  Postman renders NDJSON line-by-line in the response body.
+url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/x-ndjson
+body:
+  type: json
+  content: |-
+    {
+      "content": "你好,请介绍下自己"
+    }
+order: 2100

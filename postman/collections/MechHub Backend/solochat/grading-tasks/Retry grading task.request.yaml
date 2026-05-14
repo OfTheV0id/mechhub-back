@@ -1,0 +1,11 @@
+$kind: http-request
+name: Retry grading task
+description: >-
+  Re-run a previously failed (or completed) grading task using its
+  original attachments. Async — subscribe to events endpoint for
+  progress.
+url: "{{baseUrl}}/api/solochat/grading-tasks/{{taskId}}/retry"
+method: POST
+headers:
+  Accept: application/json
+order: 4300

@@ -1,0 +1,8 @@
+$kind: http-request
+name: List messages
+description: List all messages of a conversation, oldest first.
+url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages"
+method: GET
+headers:
+  Accept: application/json
+order: 2000

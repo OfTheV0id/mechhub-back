@@ -37,3 +37,6 @@ variables:
   googleReturnURL: http://localhost:5173
   googleAuthCode: ""
   googleAuthState: ""
+  conversationId: ""
+  attachmentId: ""
+  taskId: ""

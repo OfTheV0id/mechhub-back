@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get attachment
+description: >-
+  302 redirects to the public OSS URL for this attachment. Only the
+  owner can fetch; other users get 404.
+url: "{{baseUrl}}/api/solochat/attachments/{{attachmentId}}"
+method: GET
+headers:
+  Accept: "*/*"
+order: 3100

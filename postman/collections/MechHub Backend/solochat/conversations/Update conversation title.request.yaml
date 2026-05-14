@@ -1,0 +1,15 @@
+$kind: http-request
+name: Update conversation title
+description: Rename a conversation. Title must be 1-100 characters.
+url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "新标题"
+    }
+order: 1200

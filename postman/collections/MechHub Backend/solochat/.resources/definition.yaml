@@ -1,0 +1,6 @@
+$kind: collection
+description: >-
+  Solochat 对话 + 批改模块。需要登录 session_id cookie。
+
+  消息发送和批改任务创建走 NDJSON 流式响应,批改进度走 SSE。
+order: 3000

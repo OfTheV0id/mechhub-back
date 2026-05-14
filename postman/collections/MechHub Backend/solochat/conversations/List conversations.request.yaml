@@ -1,0 +1,8 @@
+$kind: http-request
+name: List conversations
+description: List the current user's conversations, ordered by updated_at desc.
+url: "{{baseUrl}}/api/solochat/conversations"
+method: GET
+headers:
+  Accept: application/json
+order: 1000

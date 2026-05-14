@@ -50,3 +50,7 @@ func (o *OSS) PublicURL(key string) string {
 	}
 	return o.publicBase + "/" + key
 }
+
+func (o *OSS) Download(ctx context.Context, key string) (io.ReadCloser, error) {
+	return o.bucket.GetObject(key)
+}

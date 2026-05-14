@@ -4,7 +4,10 @@
 
 ## 这是个什么项目
 
-`mechhub-back` 是一个**全新的 Go 后端**,刚起步。当前阶段完成了**用户系统**(注册 / 邮箱激活 / 角色 student-teacher 双轨注册 + teacher 由 admin 审批 / 登录 / 登出 / 找回密码 / 修改密码 / 个人资料 / 头像)。后面还会加业务模块,具体业务用户还没说。
+`mechhub-back` 是一个 Go 后端,现已完成:
+- **用户系统**:注册 / 邮箱激活 / role 双轨(student / teacher,后者由 admin 审批) / 登录 / 登出 / 找回密码 / 改密 / 资料 / 头像 / Google OAuth
+- **Solochat 模块**:对话 / 消息(NDJSON 流式) / 批改任务(SSE 进度) / 附件,**调用 `mechhub-agent` Python ADK 服务做实际 AI 工作**
+- **Docker 化**:父目录 `mechhub/docker-compose.yml` 起 go-backend + agent + mongo 三服务
 
 ## 必读的两份文档
 
@@ -33,6 +36,21 @@ GET  /api/user/me                 (需登录) 返回 id/email/name/role/avatar_u
 POST /api/user/update-profile     (需登录) 改 name,返回最新 userdata
 POST /api/user/avatar             (需登录) multipart 上传头像 → 阿里云 OSS → 返回新 URL
 POST /api/user/change-password    (需登录) 改密码,踢掉所有 session
+
+Solochat (全部需要登录):
+GET    /api/solochat/conversations                          列对话(updated_at desc)
+POST   /api/solochat/conversations                          建对话
+PATCH  /api/solochat/conversations/:id                      改标题
+DELETE /api/solochat/conversations/:id                      删对话 + 所有消息
+GET    /api/solochat/conversations/:id/messages             列消息(created_at asc)
+POST   /api/solochat/conversations/:id/messages/stream      发消息,NDJSON 流式
+GET    /api/solochat/conversations/:id/grading-tasks        列批改任务
+POST   /api/solochat/conversations/:id/grading-tasks        建批改任务(NDJSON 起步,异步执行)
+GET    /api/solochat/grading-tasks/:id                      任务详情 + annotations
+POST   /api/solochat/grading-tasks/:id/retry                重试
+GET    /api/solochat/grading-tasks/:id/events               SSE 订阅进度
+POST   /api/solochat/attachments                            multipart 上传附件
+GET    /api/solochat/attachments/:id                        302 跳 OSS 公开 URL
 ```
 
 ### 关键技术决策
@@ -109,27 +127,58 @@ POST /api/user/change-password    (需登录) 改密码,踢掉所有 session
 - "Authorized redirect URIs" 必须包含 `GOOGLE_REDIRECT_URL` 的值(开发是 `http://localhost:8080/api/auth/google/callback`)
 - scopes 默认 `openid email profile`,后端代码里硬编码
 
-### 4. 改密 / 重置密码后所有 session 失效
+### 4. Solochat:复刻 miniback 架构 + Go 调 Python agent
+
+设计 = `Mechhub-miniback` 的 solochat 在 Go + MongoDB 上的翻版,**经过实际使用验证质量良好**,直接复用避免重新设计成本。
+
+**职责划分**:
+- **Go 后端**:权限、会话、消息持久化、流式协议、附件存储编排
+- **Python agent** (`mechhub-agent`, FastAPI):实际 LLM / OCR / 批改逻辑,通过 `POST /chat`(multipart + SSE)对外
+- Go ↔ agent 用 HTTP,Docker Compose 内部 `http://agent:8001` 直连
+
+**为什么不在 Go 里跑 ADK**:Google ADK 只有 Python SDK,Go 没有等价 SDK。所以只能 Python 当微服务。
+
+**关键代码位置**:
+- `internal/agent/`:HTTP 客户端,SSE 解析(每帧 `data: <json>\n\n`,没有 event 行)
+- `internal/solochat/`:8 个文件(model/repo/service/handler/route/streamer/grading/events_hub)
+- `internal/solochat/events_hub.go`:**内存** pub/sub,任务异步执行时把状态推给所有 SSE 订阅者。**服务重启就丢**——配合启动时 `MarkAllProcessingFailed` 把孤儿任务标 failed
+- `internal/solochat/streamer.go`:`newNDJSON()` 和 `newSSE()` helper
+
+**NDJSON 协议**(消息流):一行一个 JSON,`type` discriminator(`user_input` / `assistant_start` / `assistant_delta` / `conversation_title` / `assistant_done` / `assistant_error` / `grading_start`)。
+
+**SSE 协议**(批改进度):标准 `event: <name>\ndata: <json>\n\n` + 每 25s 一行 `: ping` 心跳。
+
+**附件流转**(grading):前端 → multipart 上传到 Go → Go 写 OSS → DB 存 key → 发批改时 Go 下载 OSS → multipart 转给 agent → agent 用图。**Go 是中间人,Python 不直接访问 OSS**(用户 OSS AK 不出 Go)。
+
+**已知 gap(agent 端需扩展)**:
+- 当前 Python agent 的 SSE **不输出结构化 GradingOutput**(只输出 LLM 文本 + tool_done summary)
+- 所以 `solochat_grading_annotations` 集合**目前是空的**,UI 只能展示 overall_score(从 summary 解析)+ overall_comment(LLM 文本)
+- 接下来 agent 端要加一个 `grading_result` SSE 事件类型,带完整 `GradingOutput` JSON。Go 端 `internal/solochat/grading.go::runGradingTask` 的 events 循环里加 case 解析并批量 InsertMany 到 annotations
+- 这是 agent 团队的活,不是 Go 后端
+
+**agent session 持久化**:agent 当前 in-memory session,重启丢。所以 Go 端每次都重传图片。流量大了再优化(把 OCR 结果缓存在 mongo 而不是 agent 进程内)。
+
+### 5. 改密 / 重置密码后所有 session 失效
 
 `ChangePassword` 和 `ResetPassword` 末尾都调 `sessions.DeleteByUser`。这是行业标准,不要去掉。前端要相应处理"改密后跳登录页"。
 
-### 5. 头像存 `avatar_key` 不存 URL
+### 6. 头像存 `avatar_key` 不存 URL
 
 mongo 里只存对象 key(如 `avatars/<uid>/<rand>.png`),返回给前端时由 `oss.PublicURL(key)` 拼 URL。**改 CDN 域名只改 `.env` 不动数据**。
 
-### 6. SwapAvatarKey 是原子的
+### 7. SwapAvatarKey 是原子的
 
 `internal/user/repo.go::SwapAvatarKey` 用 `FindOneAndUpdate` 一次性拿旧 key + 设新 key。流程是:**先上传新文件成功 → swap → 删旧文件(best-effort)**,任何一步失败都不会出现"DB 指向不存在 OSS 对象"的孤儿状态。
 
-### 7. ForgotPassword 邮箱不存在也返回成功
+### 8. ForgotPassword 邮箱不存在也返回成功
 
 防枚举。不要改。
 
-### 8. Resend / Gmail 折叠对话的坑
+### 9. Resend / Gmail 折叠对话的坑
 
 用户之前以为"每次注册收到的 token 都一样" —— 实际是 Gmail 把同主题邮件折叠成 thread,默认显示最早一封。**后端确实每次生成不同 token**,这点已验证。如果用户再提这个问题,引导他看 Resend 控制台 Logs 或换非 Gmail 邮箱测试。
 
-### 9. `OSS_PUBLIC_BASE_URL` 必须带 `https://`
+### 10. `OSS_PUBLIC_BASE_URL` 必须带 `https://`
 
 `oss.go` 里直接拼接 `publicBase + "/" + key`,如果没带协议头会得到无效 URL。`.env.example` 有正确示例。
 

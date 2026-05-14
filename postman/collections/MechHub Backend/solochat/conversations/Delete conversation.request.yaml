@@ -1,0 +1,13 @@
+$kind: http-request
+name: Delete conversation
+description: >-
+  Delete a conversation and all its messages.
+
+  Later phases will also cascade-delete grading tasks, annotations,
+  and message-file associations. Files in OSS are best-effort cleaned
+  in a follow-up phase.
+url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 1300
