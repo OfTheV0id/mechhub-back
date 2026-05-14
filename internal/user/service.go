@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -359,7 +360,7 @@ func (s *Service) GoogleSignIn(ctx context.Context, code string) (*session.Sessi
 }
 
 func (s *Service) mirrorGoogleAvatar(ctx context.Context, u *User, pictureURL string) error {
-	blob, err := s.google.DownloadPicture(ctx, pictureURL)
+	blob, err := s.google.DownloadPicture(ctx, largeGooglePictureURL(pictureURL))
 	if err != nil {
 		return err
 	}
@@ -391,4 +392,13 @@ func extFromContentType(ct string) string {
 	default:
 		return ""
 	}
+}
+
+var googleSizeRe = regexp.MustCompile(`=s\d+[^&]*`)
+
+func largeGooglePictureURL(raw string) string {
+	if !strings.Contains(raw, "googleusercontent.com") {
+		return raw
+	}
+	return googleSizeRe.ReplaceAllString(raw, "=s512-c")
 }

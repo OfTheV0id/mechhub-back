@@ -56,16 +56,6 @@ type LoginReq struct {
 	Password string `json:"password" binding:"required"`
 }
 
-type LoginResp struct {
-	Message  string `json:"message"`
-	UserData MeResp `json:"userdata"`
-}
-
-type UpdateProfileResp struct {
-	Message  string `json:"message"`
-	UserData MeResp `json:"userdata"`
-}
-
 type ForgotPasswordReq struct {
 	Email string `json:"email" binding:"required,email"`
 }

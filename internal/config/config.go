@@ -45,6 +45,8 @@ type MailConfig struct {
 	ResendAPIKey string
 	From         string
 	AdminEmails  []string
+	LogoURL      string
+	BgURL        string
 }
 
 type AppConfig struct {
@@ -99,6 +101,8 @@ func Load() *Config {
 			ResendAPIKey: requireEnv("RESEND_API_KEY"),
 			From:         requireEnv("MAIL_FROM"),
 			AdminEmails:  splitCSV(requireEnv("ADMIN_EMAILS")),
+			LogoURL:      getEnv("MAIL_LOGO_URL", ""),
+			BgURL:        getEnv("MAIL_BG_URL", ""),
 		},
 		App: AppConfig{
 			BaseURL: requireEnv("APP_BASE_URL"),

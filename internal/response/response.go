@@ -25,7 +25,7 @@ type Body struct {
 }
 
 func OK(c *gin.Context, data any) {
-	c.JSON(200, Body{Code: CodeOK, Msg: "ok", Data: data})
+	c.JSON(200, Body{Code: CodeOK, Msg: "成功", Data: data})
 }
 
 func Fail(c *gin.Context, httpStatus, code int, msg string) {

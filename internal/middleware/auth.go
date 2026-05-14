@@ -13,12 +13,12 @@ func Auth(store *session.Store, cookieName string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sid, err := c.Cookie(cookieName)
 		if err != nil || sid == "" {
-			response.Fail(c, 401, response.CodeUnauthorized, "unauthorized")
+			response.Fail(c, 401, response.CodeUnauthorized, "未登录")
 			return
 		}
 		sess, err := store.Get(c.Request.Context(), sid)
 		if err != nil {
-			response.Fail(c, 401, response.CodeUnauthorized, "unauthorized")
+			response.Fail(c, 401, response.CodeUnauthorized, "未登录")
 			return
 		}
 		c.Set(CtxUserID, sess.UserID)

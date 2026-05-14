@@ -48,13 +48,13 @@ func (h *Handler) Register(c *gin.Context) {
 	role, verified, err := h.svc.Register(c.Request.Context(), req.Email, req.Password, req.Name, req.Role)
 	switch {
 	case err == nil:
-		message := "verification email sent"
+		message := "验证邮件已发送"
 		if role == UserRoleTeacher {
-			message = "teacher approval email sent"
+			message = "教师审批邮件已发送"
 		}
 		response.OK(c, RegisterResp{Message: message, Role: role, Verified: verified})
 	case errors.Is(err, ErrEmailExists):
-		response.Fail(c, 409, response.CodeEmailExists, "email already registered")
+		response.Fail(c, 409, response.CodeEmailExists, "该邮箱已注册")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -63,15 +63,15 @@ func (h *Handler) Register(c *gin.Context) {
 func (h *Handler) VerifyEmail(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		response.Fail(c, 400, response.CodeBadRequest, "token required")
+		response.Fail(c, 400, response.CodeBadRequest, "缺少 token 参数")
 		return
 	}
 	role, verified, err := h.svc.VerifyEmail(c.Request.Context(), token)
 	switch {
 	case err == nil:
-		response.OK(c, RegisterResp{Message: "email verified", Role: role, Verified: verified})
+		response.OK(c, RegisterResp{Message: "邮箱验证成功", Role: role, Verified: verified})
 	case errors.Is(err, ErrTokenInvalid):
-		response.Fail(c, 400, response.CodeTokenInvalid, "token invalid or expired")
+		response.Fail(c, 400, response.CodeTokenInvalid, "token 无效或已过期")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -80,15 +80,15 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 func (h *Handler) ApproveTeacher(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		response.Fail(c, 400, response.CodeBadRequest, "token required")
+		response.Fail(c, 400, response.CodeBadRequest, "缺少 token 参数")
 		return
 	}
 	role, verified, err := h.svc.ApproveTeacher(c.Request.Context(), token)
 	switch {
 	case err == nil:
-		response.OK(c, RegisterResp{Message: "teacher approved", Role: role, Verified: verified})
+		response.OK(c, RegisterResp{Message: "教师审批通过", Role: role, Verified: verified})
 	case errors.Is(err, ErrTokenInvalid):
-		response.Fail(c, 400, response.CodeTokenInvalid, "token invalid or expired")
+		response.Fail(c, 400, response.CodeTokenInvalid, "token 无效或已过期")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -104,11 +104,11 @@ func (h *Handler) Login(c *gin.Context) {
 	switch {
 	case err == nil:
 		h.setSessionCookie(c, sess.ID, int(h.cfg.Session.TTL.Seconds()))
-		response.OK(c, LoginResp{Message: "logged in", UserData: h.userResp(u)})
+		response.OK(c, h.userResp(u))
 	case errors.Is(err, ErrInvalidCredentials):
-		response.Fail(c, 401, response.CodeInvalidCredentials, "invalid email or password")
+		response.Fail(c, 401, response.CodeInvalidCredentials, "邮箱或密码错误")
 	case errors.Is(err, ErrEmailNotVerified):
-		response.Fail(c, 403, response.CodeEmailNotVerified, "account not verified")
+		response.Fail(c, 403, response.CodeEmailNotVerified, "账号尚未验证")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -119,7 +119,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		_ = h.svc.Logout(c.Request.Context(), sid)
 	}
 	h.setSessionCookie(c, "", -1)
-	response.OK(c, gin.H{"message": "logged out"})
+	response.OK(c, gin.H{"message": "已登出"})
 }
 
 func (h *Handler) ForgotPassword(c *gin.Context) {
@@ -132,7 +132,7 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	response.OK(c, gin.H{"message": "if the email is registered, a reset link has been sent"})
+	response.OK(c, gin.H{"message": "如该邮箱已注册，重置邮件已发送"})
 }
 
 func (h *Handler) ResetPassword(c *gin.Context) {
@@ -143,9 +143,9 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 	}
 	switch err := h.svc.ResetPassword(c.Request.Context(), req.Token, req.Password); {
 	case err == nil:
-		response.OK(c, gin.H{"message": "password updated"})
+		response.OK(c, gin.H{"message": "密码已更新"})
 	case errors.Is(err, ErrTokenInvalid):
-		response.Fail(c, 400, response.CodeTokenInvalid, "token invalid or expired")
+		response.Fail(c, 400, response.CodeTokenInvalid, "token 无效或已过期")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -161,9 +161,9 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	switch err := h.svc.ChangePassword(c.Request.Context(), uid, req.OldPassword, req.NewPassword); {
 	case err == nil:
 		h.setSessionCookie(c, "", -1)
-		response.OK(c, gin.H{"message": "password updated, please log in again"})
+		response.OK(c, gin.H{"message": "密码已更新，请重新登录"})
 	case errors.Is(err, ErrPasswordWrong):
-		response.Fail(c, 400, response.CodePasswordWrong, "current password is wrong")
+		response.Fail(c, 400, response.CodePasswordWrong, "当前密码错误")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
@@ -203,23 +203,23 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	response.OK(c, UpdateProfileResp{Message: "profile updated", UserData: h.userResp(u)})
+	response.OK(c, h.userResp(u))
 }
 
 func (h *Handler) UploadAvatar(c *gin.Context) {
 	header, err := c.FormFile("avatar")
 	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "missing 'avatar' file field")
+		response.Fail(c, 400, response.CodeBadRequest, "缺少头像文件")
 		return
 	}
 	if header.Size > h.cfg.Avatar.MaxBytes {
-		response.Fail(c, 413, response.CodeBadRequest, "avatar too large")
+		response.Fail(c, 413, response.CodeBadRequest, "头像文件过大")
 		return
 	}
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	contentType, ok := allowedAvatarExt[ext]
 	if !ok {
-		response.Fail(c, 400, response.CodeBadRequest, "unsupported file type, allow png/jpg/jpeg/webp")
+		response.Fail(c, 400, response.CodeBadRequest, "不支持的文件类型，允许 png/jpg/jpeg/webp")
 		return
 	}
 	file, err := header.Open()
@@ -253,7 +253,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	gotState := c.Query("state")
 	h.setShortCookie(c, cookieOAuthState, "")
 	if wantState == "" || gotState == "" || wantState != gotState {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid oauth state")
+		response.Fail(c, 400, response.CodeBadRequest, "OAuth 状态无效")
 		return
 	}
 
@@ -264,7 +264,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	}
 	code := c.Query("code")
 	if code == "" {
-		response.Fail(c, 400, response.CodeBadRequest, "missing code")
+		response.Fail(c, 400, response.CodeBadRequest, "缺少 code 参数")
 		return
 	}
 
