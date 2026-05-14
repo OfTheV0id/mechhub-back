@@ -9,6 +9,43 @@
 
 ---
 
+## Claude 轮 5 — 2026-05-14 — 多模态附件真喂 LLM + 协议切到 SSE
+
+### ⚠️ 破坏性变更
+
+1. **`POST /messages/stream` 响应从 NDJSON 改为 SSE**
+   - **旧** Content-Type `application/x-ndjson`,帧 `{json}\n`
+   - **新** Content-Type `text/event-stream`,帧 `data: {json}\n\n`,每 25s 心跳 `: ping\n\n`
+   - 事件 type 字段不变(共 10 种,见 HANDOFF)。前端解析改:从 `splitLines().map(JSON.parse)` 改为按 `\n\n` 切帧、去掉 `data: ` 前缀、忽略 `:` 开头的注释行、再 `JSON.parse`。
+   - 与 OpenAI / Anthropic / Vercel AI SDK 等业界主流流式 API 对齐。**不使用** EventSource(POST 不支持),前端继续用 `fetch` + `ReadableStream`
+
+2. **附件 MIME 白名单收紧**
+   - 删除 `text/markdown` 之外的灰区,保留:`image/jpeg|png|webp|gif`、`application/pdf`、`text/plain`、`text/markdown`
+   - DOCX / Office 文档明确拒绝(返回 400 中文提示)。Python agent 不再对未知 MIME 静默丢弃
+
+### 功能修复
+
+3. **附件真正喂给 LLM(轮 4 的 bug 修复)**
+   - 旧实现:`build_message_with_attachments` 只把文件路径作为字符串拼到 prompt,LLM 看不见图片;只有主动调 `grade_submission`/`ocr_images_cached` 才能看图
+   - 新实现:`mechhub-agent/server/upload.py::build_user_content` 把附件读字节后:
+     - 图片 → `Part.from_bytes(mime_type="image/...", data=)` 直接喂 ADK,LLM 能看
+     - PDF → `Part.from_bytes(mime_type="application/pdf", data=)`,qwen-vl 原生消化
+     - 文本 / Markdown → 读 utf-8 内容 inline 拼 prompt,30k 字符截断
+   - 图片同时落盘一份(`tempdir/mechhub/<session>/`),保留给工具复用
+
+### 杂项
+
+4. **CLAUDE.md「流式接口」段重写** —— 删 NDJSON 约定,统一 SSE。POST + SSE 单端点为本项目唯一流式形态。
+5. **Postman 同步**:`Send message stream` / `Upload attachments` 描述更新事件帧 + MIME 白名单
+
+### 编码前未验证假设
+
+- qwen-vl 通过 LiteLlm(OpenAI 兼容端点)能否吃 `Part.from_bytes(mime_type="application/pdf")` —— 不行就降级 pypdf 抽文本
+- ADK Content with multimodal Parts 透传 LiteLlm 后是否被正确转成 OpenAI vision messages —— 实测验证
+- SSE 帧在反代下不被缓冲 —— `X-Accel-Buffering: no` + 心跳两道保险
+
+---
+
 ## Claude 轮 4 — 2026-05-14 — Solochat 重构为通用 agent chat,前端可见 thinking + tool
 
 把 grading 从独立路径并入通用对话流,前端从此能渲染 agent 的思考过程 + 工具调用 + 工具结果。

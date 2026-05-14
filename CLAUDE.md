@@ -150,10 +150,10 @@ mechhub-back/
 
 ## 流式接口
 
-- **NDJSON**(`application/x-ndjson`):用于"一次请求 + 一次流式响应"的场景(如发消息)。一行一个完整 JSON,`type` discriminator。Go 端用 `streamer.go::newNDJSON` + `c.Writer.Write` + `http.Flusher.Flush`。
-- **SSE**(`text/event-stream`):用于"长连接订阅",客户端可断开重连。帧格式 `event: <name>\ndata: <json>\n\n`,**必须**每 25s 一行 `: ping` 心跳,防代理超时。Go 端用 `streamer.go::newSSE`。
-- 都要 set `X-Accel-Buffering: no` 头,防止 nginx 缓冲整个响应。
-- **异步任务事件**(如批改进度):用 `events_hub.go` 的内存 pub/sub,goroutine 执行任务 → `hub.Publish` → 多个 SSE 订阅者 `hub.Subscribe` fan-out。**服务重启就丢**,所以启动时必须把 `status=processing` 的孤儿任务标 `failed`(参考 `solochat.RecoverPendingTasks`)。
+- **SSE**(`text/event-stream`):**所有**流式接口统一用 SSE,与业界主流(OpenAI / Anthropic / Vercel AI SDK)对齐。帧格式 `data: <json>\n\n`,**不用** `event:` 行,事件类型走 JSON 内的 `type` 字段。每 25s 一行 `: ping\n\n` 心跳,防代理超时。
+- POST + SSE 响应体单端点(`/api/solochat/conversations/:id/messages/stream`)是当前的发消息模式。前端用 `fetch()` 读 response body stream,按 `\n\n` 切帧,去掉 `data: ` 前缀再 `JSON.parse`。**不使用浏览器原生 `EventSource`**(它只支持 GET 且不能带 body)。
+- Go 端 helper:`internal/solochat/streamer.go::newSSE` + `c.Writer.Write` + `http.Flusher.Flush`。
+- 必须 set `X-Accel-Buffering: no` 头,防止 nginx / Cloudflare 缓冲整个响应。
 
 ## Python Agent 对接(`internal/agent/`)
 

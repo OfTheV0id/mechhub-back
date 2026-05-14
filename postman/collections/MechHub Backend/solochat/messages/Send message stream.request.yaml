@@ -2,10 +2,13 @@ $kind: http-request
 name: Send message stream
 description: >-
   Send a user message to a conversation. Responds with
-  `application/x-ndjson` — one JSON event per line.
+  `text/event-stream` — one SSE frame per event:
+  ```
+  data: {"type":"...","message_id":"...",...}\n\n
+  ```
 
 
-  ## NDJSON event types
+  ## SSE event types (read `type` field of the JSON in `data:` line)
 
 
   - `user_input`         — user message just stored (with `attachments[]`)
@@ -20,6 +23,9 @@ description: >-
   - `message_done`       — assistant turn ended (`finish_reason`)
 
 
+  Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
+
+
   Typical sequence for an answer that uses a tool:
   ```
   user_input → message_start → reasoning_delta* → tool_call_start
@@ -27,12 +33,14 @@ description: >-
   ```
 
 
-  Postman renders NDJSON line-by-line in the response body.
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream,
+  split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native
+  `EventSource` API can't be used because this endpoint is POST.
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
 method: POST
 headers:
   Content-Type: application/json
-  Accept: application/x-ndjson
+  Accept: text/event-stream
 body:
   type: json
   content: |-

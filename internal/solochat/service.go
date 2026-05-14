@@ -228,7 +228,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.
 
 func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.ObjectID, content string, attachmentIDs []bson.ObjectID) {
 	ctx := c.Request.Context()
-	w := newNDJSON(c)
+	w := newSSE(c)
 
 	conv, err := s.repo.FindConversation(ctx, conversationID, userID)
 	if err != nil {
@@ -335,7 +335,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 	}
 }
 
-func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string, w *ndjsonWriter) ([]MessagePart, string, string) {
+func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string, w *sseWriter) ([]MessagePart, string, string) {
 	parts := make([]MessagePart, 0, 8)
 	finishReason := "stop"
 	streamErr := ""
@@ -356,78 +356,87 @@ func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string
 		prevKind = ""
 	}
 
-	for ev := range events {
-		ev.MessageID = messageID
-		switch ev.Type {
-		case agent.EventMessageStart:
-			w.write(StreamEvent{Type: StreamMessageStart, MessageID: messageID, Model: ev.Model})
-		case agent.EventReasoningDelta:
-			if prevKind == "text" {
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !w.heartbeat() {
+				flushBuffers()
+				return parts, finishReason, streamErr
+			}
+		case ev, ok := <-events:
+			if !ok {
+				flushBuffers()
+				return parts, finishReason, streamErr
+			}
+			ev.MessageID = messageID
+			switch ev.Type {
+			case agent.EventMessageStart:
+				w.write(StreamEvent{Type: StreamMessageStart, MessageID: messageID, Model: ev.Model})
+			case agent.EventReasoningDelta:
+				if prevKind == "text" && textBuf.Len() > 0 {
+					parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
+					textBuf.Reset()
+				}
+				thinkBuf.WriteString(ev.Delta)
+				prevKind = "thinking"
+				w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: messageID, Delta: ev.Delta})
+			case agent.EventTextDelta:
+				if prevKind == "thinking" && thinkBuf.Len() > 0 {
+					parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
+					thinkBuf.Reset()
+				}
+				textBuf.WriteString(ev.Delta)
+				prevKind = "text"
+				w.write(StreamEvent{Type: StreamTextDelta, MessageID: messageID, Delta: ev.Delta})
+			case agent.EventTextComplete:
+				if ev.Text != "" {
+					textBuf.Reset()
+					textBuf.WriteString(ev.Text)
+				}
 				if textBuf.Len() > 0 {
 					parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
 					textBuf.Reset()
 				}
-			}
-			thinkBuf.WriteString(ev.Delta)
-			prevKind = "thinking"
-			w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: messageID, Delta: ev.Delta})
-		case agent.EventTextDelta:
-			if prevKind == "thinking" {
-				if thinkBuf.Len() > 0 {
-					parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
-					thinkBuf.Reset()
+				prevKind = ""
+				w.write(StreamEvent{Type: StreamTextComplete, MessageID: messageID, Text: ev.Text})
+			case agent.EventToolCallStart:
+				flushBuffers()
+				parts = append(parts, MessagePart{
+					Type:      PartToolUse,
+					ToolUseID: ev.ToolUseID,
+					Name:      ev.Name,
+					Input:     cloneRaw(ev.Input),
+				})
+				w.write(StreamEvent{Type: StreamToolCallStart, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Input: ev.Input})
+			case agent.EventToolResult:
+				parts = append(parts, MessagePart{
+					Type:      PartToolResult,
+					ToolUseID: ev.ToolUseID,
+					Name:      ev.Name,
+					Output:    cloneRaw(ev.Output),
+					IsError:   ev.IsError,
+					ElapsedMS: ev.ElapsedMS,
+				})
+				w.write(StreamEvent{Type: StreamToolResult, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Output: ev.Output, IsError: ev.IsError, ElapsedMS: ev.ElapsedMS})
+			case agent.EventError:
+				streamErr = ev.Message
+				if streamErr == "" {
+					streamErr = "agent error"
 				}
+				finishReason = "error"
+				w.write(StreamEvent{Type: StreamError, MessageID: messageID, Code: ev.Code, ErrorMsg: streamErr})
+			case agent.EventMessageDone:
+				flushBuffers()
+				if ev.FinishReason != "" {
+					finishReason = ev.FinishReason
+				}
+				w.write(StreamEvent{Type: StreamMessageDone, MessageID: messageID, FinishReason: finishReason})
 			}
-			textBuf.WriteString(ev.Delta)
-			prevKind = "text"
-			w.write(StreamEvent{Type: StreamTextDelta, MessageID: messageID, Delta: ev.Delta})
-		case agent.EventTextComplete:
-			if ev.Text != "" {
-				textBuf.Reset()
-				textBuf.WriteString(ev.Text)
-			}
-			if textBuf.Len() > 0 {
-				parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
-				textBuf.Reset()
-			}
-			prevKind = ""
-			w.write(StreamEvent{Type: StreamTextComplete, MessageID: messageID, Text: ev.Text})
-		case agent.EventToolCallStart:
-			flushBuffers()
-			parts = append(parts, MessagePart{
-				Type:      PartToolUse,
-				ToolUseID: ev.ToolUseID,
-				Name:      ev.Name,
-				Input:     cloneRaw(ev.Input),
-			})
-			w.write(StreamEvent{Type: StreamToolCallStart, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Input: ev.Input})
-		case agent.EventToolResult:
-			parts = append(parts, MessagePart{
-				Type:      PartToolResult,
-				ToolUseID: ev.ToolUseID,
-				Name:      ev.Name,
-				Output:    cloneRaw(ev.Output),
-				IsError:   ev.IsError,
-				ElapsedMS: ev.ElapsedMS,
-			})
-			w.write(StreamEvent{Type: StreamToolResult, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Output: ev.Output, IsError: ev.IsError, ElapsedMS: ev.ElapsedMS})
-		case agent.EventError:
-			streamErr = ev.Message
-			if streamErr == "" {
-				streamErr = "agent error"
-			}
-			finishReason = "error"
-			w.write(StreamEvent{Type: StreamError, MessageID: messageID, Code: ev.Code, ErrorMsg: streamErr})
-		case agent.EventMessageDone:
-			flushBuffers()
-			if ev.FinishReason != "" {
-				finishReason = ev.FinishReason
-			}
-			w.write(StreamEvent{Type: StreamMessageDone, MessageID: messageID, FinishReason: finishReason})
 		}
 	}
-	flushBuffers()
-	return parts, finishReason, streamErr
 }
 
 func cloneRaw(r json.RawMessage) json.RawMessage {

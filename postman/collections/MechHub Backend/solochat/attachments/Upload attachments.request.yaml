@@ -2,9 +2,10 @@ $kind: http-request
 name: Upload attachments
 description: >-
   Upload 1-N files in one multipart form. Field name: `files` (can
-  repeat). Allowed MIME: image/png|jpeg|webp|gif, text/plain,
-  text/markdown, application/pdf. Max single file size =
-  `SOLOCHAT_MAX_FILE_SIZE_BYTES` (default 20 MiB).
+  repeat). Allowed MIME: image/png|jpeg|webp|gif, application/pdf,
+  text/plain, text/markdown. Max single file size =
+  `SOLOCHAT_MAX_FILE_SIZE_BYTES` (default 20 MiB). DOCX/Office and
+  audio/video are NOT accepted.
 
 
   Response returns the uploaded file metadata including the public
@@ -12,8 +13,11 @@ description: >-
   call.
 
 
-  The Python agent receives all of these (not just images); it decides
-  which tool to invoke based on user intent and content.
+  The Python agent receives attachment bytes as multimodal `Part`s:
+  images / PDFs go to the LLM directly so the model "sees" them; text /
+  Markdown content is inlined into the prompt. The LLM may also call
+  `grade_submission` / `ocr_images_cached` tools on uploaded images
+  for structured analysis.
 url: "{{baseUrl}}/api/solochat/attachments"
 method: POST
 headers:
