@@ -6,8 +6,9 @@
 
 `mechhub-back` 是一个 Go 后端,现已完成:
 - **用户系统**:注册 / 邮箱激活 / role 双轨(student / teacher,后者由 admin 审批) / 登录 / 登出 / 找回密码 / 改密 / 资料 / 头像 / Google OAuth
-- **Solochat 模块**:通用 agent 对话,前端可见 thinking + 工具调用 + 工具结果。**调用 `mechhub-agent` Python ADK 服务做实际 LLM 工作**。批改不再是独立功能,是 agent 自主调用 `grade_submission` 工具的一个特例
-- **Docker 化**:父目录 `mechhub/docker-compose.yml` 起 go-backend + agent + mongo 三服务
+- **Solochat 模块**:通用 agent 对话,前端可见 thinking + 工具调用 + 工具结果。**轮 7 起 Go 直接接 ADK Go(`google.golang.org/adk` v1.2.0)+ Gemini 2.5 Flash 原生 SDK,Python 服务退场**。批改不再是独立功能,是 agent 自主调用 `grade_submission` 工具的一个特例
+- **数据库**:MySQL via GORM(轮 7 起,Mongo 整体退场);ADK Go 的 sessions/events/state 表与我们的 users/tokens/user_sessions/solochat_conversations/uploaded_files 业务表同库不同表
+- **Docker 化**:父目录 `mechhub/docker-compose.yml` 起 go-backend + mysql 两服务(`agent` / `mongo` 已退场)
 
 ## 必读的两份文档
 
@@ -43,7 +44,7 @@ POST   /api/solochat/conversations                          建对话
 PATCH  /api/solochat/conversations/:id                      改标题
 DELETE /api/solochat/conversations/:id                      删对话 + 所有消息
 GET    /api/solochat/conversations/:id/messages             列消息(created_at asc),每条带 parts[] + attachments[]
-POST   /api/solochat/conversations/:id/messages/stream      发消息,NDJSON 流式(10 种事件,见下)
+POST   /api/solochat/conversations/:id/messages/stream      发消息,SSE 流式(10 种事件,见下)
 POST   /api/solochat/attachments                            multipart 上传附件(image/pdf/text/markdown)
 GET    /api/solochat/attachments/:id                        302 跳 OSS 公开 URL
 ```
@@ -74,7 +75,7 @@ user_input → message_start → reasoning_delta* → tool_call_start
 
 Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `tool_use` / `tool_result`。`GET /messages` 返回这些 parts,前端按数组顺序逐块渲染。
 
-**轮 6 起,消息不再存 Mongo**:`GET /messages` 由 Go 代理 Python `GET /sessions/:id/messages`,Python 把 ADK SQL 库里的 events 翻译成 `MessageDTO[]`,Go 端按 user message 的 file_ids hydrate 出附件 URL / MIME 元信息。`StreamUserInput.message.id` 改为 `pending-user-<random>` 临时占位(流跑完前端可重新 GET 拿 canonical 的 ADK event UUID)。
+**轮 7 起,消息源走 ADK Go**:`GET /messages` 由 Go 直接查 `internal/llm.Service.ListMessages`(读 ADK session 的 events + state,按 invocation_id 分组翻译成 `MessageDTO[]`),不再走 HTTP 到 Python。Go 仍负责按 user message 的 file_ids hydrate 出附件 URL / MIME 元信息。`StreamUserInput.message.id` 是 `pending-user-<random>` 临时占位(流跑完前端可重新 GET 拿 canonical 的 ADK event UUID)。
 
 ### 关键技术决策
 
@@ -150,37 +151,35 @@ Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `
 - "Authorized redirect URIs" 必须包含 `GOOGLE_REDIRECT_URL` 的值(开发是 `http://localhost:8080/api/auth/google/callback`)
 - scopes 默认 `openid email profile`,后端代码里硬编码
 
-### 4. Solochat:通用 agent chat(轮 4 重构)
+### 4. Solochat:通用 agent chat(轮 4 重构,轮 7 收敛为单 Go 服务)
 
 **职责划分**:
-- **Go 后端**:权限、会话元数据、附件 OSS 编排、流式协议透传。**消息不在 Go 这边持久化**(轮 6 起,搬到 mechhub-agent 的 ADK SQL 库)
-- **Python agent** (`mechhub-agent`, FastAPI + Google ADK):LLM 推理 + 工具调用 + 消息持久化。`POST /chat`(multipart + SSE)发消息;`GET /sessions/:id/messages` 给 Go 代理拉历史;ADK `DatabaseSessionService` 走 `ADK_DB_URL`(开发 sqlite+aiosqlite,生产 mysql+asyncmy)
-- Go ↔ agent 用 HTTP,Docker Compose 内部 `http://agent:8001` 直连
-
-**为什么不在 Go 里跑 ADK**:Google ADK 只有 Python SDK。
+- **Go 后端 = 一切**:权限、会话元数据、附件 OSS 编排、LLM 推理、工具调用、消息持久化。**没有 Python 服务**(轮 7 起 `mechhub-agent` 仓库归档)
+- LLM 通过 ADK Go (`google.golang.org/adk` v1.2.0) + Gemini 2.5 Flash 原生 SDK 跑;持久化通过 ADK Go 的 `session/database.NewSessionService(mysql.Open(dsn))`
+- ADK Go 在 MySQL 同库自动建 `sessions` / `events` / `app_states` / `user_states` 四张表;我们的 cookie session 表改名 `user_sessions` 避开撞名
 
 **关键代码位置**:
-- `internal/agent/{model,client}.go`:HTTP 客户端 + SSE 解析(POST /chat),以及 `FetchMessages`(GET /sessions/:id/messages)
-- `internal/solochat/`:6 个文件(model/repo/service/handler/route/streamer)。**`grading.go` / `events_hub.go` 已删除(轮 4);Message / MessageFile 持久化代码已删除(轮 6)**
-- `internal/solochat/service.go::forwardAgentStream`:1:1 透传 agent SSE 事件给前端,不再累积 parts
-- `internal/solochat/service.go::ListMessages`:代理 Python `/sessions/:id/messages`,hydrate 附件元信息
-- `mechhub-agent/server/sse.py::stream_chat`:Python 端统一生成器,流过程中捕获 ADK 真实 invocation_id,流末写 state_delta 把 file_ids 绑定到本轮 user event
-- `mechhub-agent/server/routes/sessions.py::list_messages`:把 ADK events 按 invocation_id 分组翻译成 MessageDTO
-- `mechhub-agent/server/runner.py`:ADK `DatabaseSessionService` 单例,`ADK_DB_URL` 走 env
-- `mechhub-agent/mechhub_agent/callbacks.py`:`before/after_tool_callback` 通过 `contextvars.ContextVar` 拿到本次请求的 `asyncio.Queue`,把 `tool_call_start` / `tool_result` 入队
-- `mechhub-agent/mechhub_agent/agent.py::_build_model`:控制 `enable_thinking` 开关
+- `internal/llm/runner.go::Bootstrap`:Gemini 模型 + LlmAgent + Runner + database session service,启动期建一次
+- `internal/llm/sse.go::StreamChat`:跑一轮 agent,迭代 `iter.Seq2[*session.Event, error]` 翻译成 SSE 帧;流末用 `appendAttachmentBinding` 写 `_solochat_attachments_<invocation_id>` 到 session.state
+- `internal/llm/sessions.go::ListMessages`:`session.Service.Get` 读 events,按 invocation_id 分组翻译成 MessageDTO
+- `internal/llm/tools/ocr.go`:Document AI Go 客户端;cache key 按 file_id 反查(`<file_id>-<filename>` 路径前缀);state 里走 `ocr_cache`
+- `internal/llm/tools/grader.go`:Gemini structured output (`ResponseSchema = schemas.Schema()`);先读/写 OCR 缓存再批改
+- `internal/llm/prompts/prompts.go`:`RootSystemPrompt` + `BuildGradingPrompt`
+- `internal/llm/schemas/grading.go`:GradingOutput Go struct + `*genai.Schema`
+- `internal/solochat/service.go::SendMessageStream`:校验 + 下载附件 + `s.llm.StreamChat(...)` + SSE 透给前端;ListMessages 调 `s.llm.ListMessages(...)` 然后 hydrate 附件 URL
+- `cmd/adkpoc/main.go`:Stage 1 PoC,`go run ./cmd/adkpoc` 单独跑一次 ADK Go + sqlite 验证
 
-**事件协议**:见上文"已开放的接口"段的 NDJSON 事件表。Python SSE → Go NDJSON 是 1:1 透传 + 加 `user_input` / `conversation_title` 两个 Go-only 事件。
+**事件协议**:8 种 SSE 帧(`message_start` / `reasoning_delta` / `text_delta` / `text_complete` / `tool_call_start` / `tool_result` / `error` / `message_done`)+ 2 种 Go-only(`user_input` / `conversation_title`)。所有事件 type 走 JSON `type` 字段。前端解析:按 `\n\n` 切帧 + 去 `data: ` 前缀 + `JSON.parse`。
 
-**附件流转**(轮 5 修过):前端 → multipart 上传到 Go(MIME 白名单 image/PDF/text/markdown,DOCX 拒收)→ Go 写 OSS → DB 存 key → 发消息时 Go 下载 OSS → multipart 转给 agent(字段 `files`)→ Python `build_user_content` 把字节作为 `Part.from_bytes(...)` 直接塞进 ADK Content,LLM 能"看见"图片 / PDF;文本 / Markdown 内容 inline 拼到 prompt。图片同时落盘一份保留给 `grade_submission` / `ocr_images_cached` 工具复用。**Go 是中间人,Python 不直接访问 OSS**(用户 OSS AK 不出 Go)。
+**附件流转**:前端 → multipart 上传到 Go(MIME 白名单 image/PDF/text/markdown)→ Go 写 OSS → DB 存 key → 发消息时 Go `buildUserContent` 读 OSS 字节 → 图片 / PDF 包成 `*genai.Part{InlineData: ...}` 直接给 ADK,LLM 能"看见";text/markdown 内容 inline 拼到 prompt 文本。图片同时落盘 `<tmp>/mechhub/<session>/<file_id>-<filename>`,工具(OCR / grading)按这个路径反查 file_id 当 cache key,跨重启稳定。
 
-**批改不是独立功能**:LLM 自主决定何时调 `grade_submission(image_paths)` 工具。工具会自动用 OCR 缓存(本次 session state),返回完整 `GradingOutput` JSON。前端从对应 `tool_result.output` 渲染分数 + 评语 + 步骤分析。**`/grading-tasks/*` 端点已经全部下线**。
+**批改不是独立功能**:LLM 自主决定何时调 `grade_submission(image_paths)` 工具。工具内部按需复用 OCR 缓存,调 Gemini structured-output 拿 GradingOutput,返回结构化 JSON。前端从对应 `tool_result.output` 渲染分数 + 评语 + 步骤分析。`/grading-tasks/*` 端点轮 4 已下线。
 
-**agent session 持久化**(轮 6 起):agent 用 ADK 官方 `DatabaseSessionService` 持久化 events + state(含 OCR cache + 附件绑定)到 SQL,开发默认 `sqlite+aiosqlite:///./adk_sessions.db`,线上切 `mysql+asyncmy://...`。进程重启不再失忆,OCR 缓存跨重启复用。附件绑定通过 `_solochat_attachments_<invocation_id>` 状态键,翻译时按 invocation_id 反查。
+**Session 持久化**:ADK Go 用 GORM 写 sessions/events/state 三张表;进程重启历史完整保留,OCR 缓存跨重启复用。附件绑定通过 `_solochat_attachments_<invocation_id>` state key,读时按 key 反查 file_ids。
 
-**为什么不用 Mongo 接 ADK**:ADK 官方 `DatabaseSessionService` 只支持 SQL,Mongo 要自己写 `BaseSessionService` 子类(~200 行)。决策:直接走 MySQL,Mongo 业务数据后续统一迁。
+**为什么换掉 Python**:轮 4-6 期间用 Python 是因为 ADK 当时只有 Python SDK;ADK Go 2026-04 GA 之后,微服务拆分带来的复杂度不再值得。代价:LiteLLM 没有 Go 等价物,接非 Google 模型(qwen / Claude)需要自己实现 `model.LLM` 接口 200-400 行 —— 但本期锁 Gemini 不踩这个坑。
 
-**Runner.run_async 的 invocation_id 是 ADK 自己分配的**(`e-<uuid>`,外部传入会被覆盖)—— sse.py 在流过程中捕获实际 invocation_id,流末追加 state-only event 写绑定。不要尝试在调用前就生成 invocation_id 并相信它。
+**ADK Go 自动生成的 invocation_id 是 `e-<uuid>`**(它内部覆盖外部传入的值)—— `internal/llm/sse.go::StreamChat` 在流过程中捕获实际 invocation_id,流末才写 state_delta。不要尝试在调用前就生成 invocation_id 并相信它。
 
 ### 5. 改密 / 重置密码后所有 session 失效
 

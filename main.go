@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
-	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
+	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/oauth"
 	"mechhub-back/internal/router"
@@ -44,13 +45,28 @@ func main() {
 		log.Fatalf("oss init: %v", err)
 	}
 	google := oauth.NewGoogle(cfg.Google)
-	agentClient := agent.NewClient(cfg.Agent)
 
-	r := router.New(cfg, gormDB, sessions, mailer, oss, google, agentClient)
+	llmSvc, err := llm.Bootstrap(ctx, llm.Config{
+		MySQLDSN:     cfg.MySQL.DSN,
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
+		GeminiModel:  envDefault("GEMINI_MODEL", "gemini-2.5-flash"),
+	})
+	if err != nil {
+		log.Fatalf("llm bootstrap: %v", err)
+	}
+
+	r := router.New(cfg, gormDB, sessions, mailer, oss, google, llmSvc)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+func envDefault(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

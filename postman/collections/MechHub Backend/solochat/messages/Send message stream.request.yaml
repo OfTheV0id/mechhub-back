@@ -11,7 +11,7 @@ description: >-
   ## SSE event types (read `type` field of the JSON in `data:` line)
 
 
-  - `user_input`         — user message echo (轮 6 起 `message.id` 是
+  - `user_input`         — user message echo (`message.id` 是
     `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
     重新 `GET /messages` 拿)
   - `message_start`      — assistant turn begins (`message_id`, `model`)
@@ -40,13 +40,13 @@ description: >-
   `EventSource` API can't be used because this endpoint is POST.
 
 
-  ## 持久化(轮 6)
+  ## 持久化(轮 7)
 
-  Go 端不再 InsertMessage / FinalizeMessage。请求体 `attachments` 里的
-  file_id 被 Go 转给 mechhub-agent 的 `POST /chat` multipart 字段
-  `file_ids`,Python 在 ADK 流跑完后写 session.state 的
-  `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查
-  挂到 user message 的 attachments[] 字段。
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。
+  Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体
+  `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到
+  session.state 的 `_solochat_attachments_<invocation_id>` 键,后续
+  `GET /messages` 反查挂到 user message 的 attachments[] 字段。
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
 method: POST
 headers:

@@ -4,8 +4,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
+	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/oauth"
@@ -15,7 +15,7 @@ import (
 	"mechhub-back/internal/user"
 )
 
-func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, google *oauth.Google, agentClient *agent.Client) *gin.Engine {
+func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, google *oauth.Google, llmSvc *llm.Service) *gin.Engine {
 	r := gin.Default()
 
 	if cfg.CORS.Enabled {
@@ -23,7 +23,6 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	}
 
 	api := r.Group("/api")
-
 	auth := middleware.Auth(sessions, cfg.Session.CookieName)
 
 	userRepo := user.NewRepo(db)
@@ -32,7 +31,7 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	user.Mount(api, userHandler, auth)
 
 	solochatRepo := solochat.NewRepo(db)
-	solochatSvc := solochat.NewService(solochatRepo, agentClient, oss, cfg)
+	solochatSvc := solochat.NewService(solochatRepo, llmSvc, oss, cfg)
 	solochatHandler := solochat.NewHandler(solochatSvc)
 	solochat.Mount(api, solochatHandler, auth)
 

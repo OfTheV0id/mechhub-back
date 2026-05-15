@@ -9,6 +9,55 @@
 
 ---
 
+## Claude 轮 7 — 2026-05-15 — Python 退役,Go + ADK Go + MySQL 单仓收敛
+
+### ⚠️ 破坏性变更
+
+1. **`mechhub-agent` Python 服务整体退役**
+   - Go 端直接用 ADK Go (`google.golang.org/adk` v1.2.0) 跑 Gemini 2.5 Flash,自带 session 持久化(GORM dialector → MySQL),不再依赖 Python HTTP agent
+   - `internal/agent/` 包(HTTP 客户端)**整个删除**;`AGENT_BASE_URL` / `AGENT_REQUEST_TIMEOUT_SECONDS` env 不再使用
+   - 父目录 `docker-compose.yml` 需要:**删** `agent` 服务、**删** `mongo` 服务、**加** `mysql:8` 服务,并把 `GEMINI_API_KEY` / `MYSQL_DSN` / `DOCUMENTAI_*` 加入 go-backend 的 env(本仓库不维护 compose 文件)
+   - mechhub-agent 仓库**归档不删**,以后想切回 LiteLLM/qwen 还能看到参考实现
+
+2. **Mongo → MySQL 全量迁移**
+   - 五张业务集合(users / tokens / sessions / solochat_conversations / uploaded_files)走 GORM + `gorm.io/driver/mysql`
+   - `cookie session` 表改名 `user_sessions`,避开和 ADK Go 自动建的 `sessions` 表撞名(同一个 MySQL database 内)
+   - 主键类型:`bson.ObjectID`(24 hex)→ UUID v4 字符串(36 char)。前端 API 响应中 `Message.id` / `Conversation.id` / `User.id` 等所有 ID 长度都变了,前端继续把它们当 opaque 字符串就行
+   - TTL:Mongo 的 `expires_at` TTL index 没了,改用 `internal/db.StartTTLCleanup` 后台 goroutine 每 60s `DELETE WHERE expires_at < NOW()`,等价行为
+   - 启动期 GORM `AutoMigrate` 自动建表 + ADK Go 自动建 sessions/events/app_states/user_states。无生产数据,不做老数据迁移
+
+3. **env 变化**
+   - **删**:`MONGO_URI` / `MONGO_DB` / `AGENT_BASE_URL` / `AGENT_REQUEST_TIMEOUT_SECONDS` / `SOLOCHAT_MIGRATE_DROP_GRADING` / `SOLOCHAT_MIGRATE_DROP_MESSAGES`
+   - **加**:`MYSQL_DSN` (e.g. `mechhub:pwd@tcp(mysql:3306)/mechhub?charset=utf8mb4&parseTime=true&loc=UTC`)、`GEMINI_API_KEY`、`GEMINI_MODEL` (默认 `gemini-2.5-flash`)、`GEMINI_GRADER_MODEL` (可选,留空复用 GEMINI_MODEL)、`GOOGLE_CLOUD_PROJECT_ID` / `DOCUMENTAI_LOCATION` / `DOCUMENTAI_PROCESSOR_ID` / `GOOGLE_APPLICATION_CREDENTIALS`(Document AI 鉴权)
+
+### 新增 / 内部架构
+
+4. **`internal/llm/` 包(新)** 取代 `internal/agent/`:
+   - `runner.go::Bootstrap` —— Gemini 模型 + LlmAgent + Runner + `session/database.NewSessionService(mysql.Open(dsn))` + AutoMigrate
+   - `sse.go::StreamChat` —— 跑一轮 agent,把 `iter.Seq2[*session.Event, error]` 翻译成 8 种 SSE 帧(message_start / reasoning_delta / text_delta / text_complete / tool_call_start / tool_result / error / message_done);沿用 Round 6 的 `_solochat_attachments_<invocation_id>` state 模式做附件绑定
+   - `sessions.go::ListMessages` —— 直接查 ADK session,events 按 invocation_id 分组翻译成 MessageDTO
+   - `tools/ocr.go` —— Document AI Go 客户端,移植自 Python `tools/ocr.py`,cache key 仍按 `file_id` 反查
+   - `tools/grader.go` —— Gemini structured-output(`ResponseSchema=schemas.Schema()`),移植自 Python `providers/google.py`
+   - `prompts/prompts.go` —— ROOT_SYSTEM_PROMPT + BuildGradingPrompt,1:1 移植
+   - `schemas/grading.go` —— GradingOutput Go struct + `*genai.Schema`,对应 Pydantic GradingOutput
+
+5. **`cmd/adkpoc/main.go`** 保留作为 Stage 1 PoC 参考。可随时 `go run ./cmd/adkpoc` 单跑一次 ADK Go + sqlite 流程验证
+
+6. **`internal/db/mysql.go`** —— `Connect(dsn) -> *gorm.DB`;`StartTTLCleanup` 替代 Mongo TTL 索引
+7. **`internal/db/smoke_test.go`** —— Stage 2 GORM 五表 roundtrip 测试(sqlite 内存库),`go test ./internal/db/` 跑一遍验证 repo 没漏改
+
+### 移除
+
+8. 删:`internal/agent/` 整个包(client.go / model.go)、`internal/db/mongo.go`、`Message` / `MessageFile` Mongo 持久化结构(round 6 已删)、`go.mongodb.org/mongo-driver/v2` 依赖
+
+### 编码前未验证假设(已实测)
+
+- ADK Go `session/database.NewSessionService(gorm.Dialector)` 接 sqlite + GORM ✅(Stage 1 PoC);MySQL via `gorm.io/driver/mysql` 同样走 dialector 接口,理论上等价。生产部署时第一次启动确认 ADK 自动建表能跑通即可
+- `runner.WithStateDelta` 写 session.state 跨 instance 持久 ✅(Stage 1 PoC 跑过)
+- Gemini 2.5 vs qwen 中文 / 数学 / 视觉能力差异:本轮先跑通,效果差再 round 8 加 LiteLLM-go 等价物 / qwen 适配器
+
+---
+
 ## Claude 轮 6 — 2026-05-15 — 单一事实源:ADK Session 持久化到 SQL,Go 不再存消息
 
 ### ⚠️ 破坏性变更

@@ -6,15 +6,15 @@
 
 - 语言:Go (`go.mod` 已定基线版本)
 - Web 框架:`gin-gonic/gin`
-- 数据库:MongoDB (`go.mongodb.org/mongo-driver/v2`)
+- 数据库:MySQL (`gorm.io/driver/mysql` + `gorm.io/gorm`,GORM AutoMigrate 启动期建表)
 - 配置:`.env` + `joho/godotenv`,`internal/config` 集中加载
 - 邮件:`resend-go/v3`
 - 对象存储:阿里云 OSS (`aliyun/aliyun-oss-go-sdk`)
 - OAuth:`golang.org/x/oauth2`(Google)
 - 密码:`golang.org/x/crypto/bcrypt`
-- 认证:Session ID + Cookie(服务端 session 存 MongoDB,带 TTL),**不用 JWT**
-- AI agent 后端:Python FastAPI(项目 `mechhub-agent`,Google ADK),Go 通过 HTTP + SSE 调用,**Go 不自己接 LLM SDK**
-- 部署:Docker Compose(父目录 `mechhub/docker-compose.yml`,三服务 go-backend + agent + mongo)
+- 认证:Session ID + Cookie(服务端 session 存 MySQL `user_sessions` 表,带 TTL 后台清理 goroutine),**不用 JWT**
+- AI agent:**Go 直接接 ADK Go**(`google.golang.org/adk` v1.2.0)+ Gemini 2.5 Flash 原生 SDK(`google.golang.org/genai`)+ Document AI Go 客户端。`internal/llm/` 是 LLM 边界,**Go 内部直接跑 agent / tools / session,不再有 Python 服务**
+- 部署:Docker Compose(父目录 `mechhub/docker-compose.yml`,**两服务** go-backend + mysql。`agent` / `mongo` 已退场)
 
 ## 目录约定
 
@@ -118,12 +118,13 @@ mechhub-back/
 - 集合命名:**用户系统** `users` / `sessions` / `tokens`;**Solochat** 加 `solochat_` 前缀(`solochat_conversations` 等);**通用** `uploaded_files`(头像 + solochat 附件共用)。
 - 加新模块时新建的集合应该加同样的模块名前缀,便于看名字就知道归属。
 
-### 消息源 ≠ Mongo(轮 6 起)
+### 消息源:ADK Go 的 sessions/events 表(轮 7 起)
 
-- 对话消息(events / state / OCR 缓存 / 附件绑定)**不在 Go 这边的 Mongo**,而是由 `mechhub-agent` 用 ADK 官方 `DatabaseSessionService` 持久化到 SQL(开发 sqlite,生产 mysql)
-- Go 只保留 `solochat_conversations`(标题 / 用户 / 时间戳)+ `uploaded_files`(OSS 附件元信息)+ 用户系统三件套
-- `GET /messages` 由 Go 代理 Python `GET /sessions/:id/messages`,Python 把 ADK events 翻译成 `MessageDTO[]`,Go 只 hydrate 附件 URL / MIME 等元信息
-- 旧 `solochat_messages` / `solochat_message_files` 集合废弃,启动期 `SOLOCHAT_MIGRATE_DROP_MESSAGES=true` 自动 drop
+- 对话消息(events + state + OCR 缓存 + 附件绑定)由 ADK Go `session/database.NewSessionService(mysql.Open(dsn))` 持久化到 MySQL 同库的 `sessions` / `events` / `app_states` / `user_states` 表(由 ADK Go 自动 migrate)
+- 我们的业务表只有:`users` / `tokens` / `user_sessions`(cookie session,注意改名避开 ADK 的 `sessions`)/ `solochat_conversations` / `uploaded_files`
+- `GET /messages` 直接读 ADK session 然后翻译成 MessageDTO,见 `internal/llm/sessions.go`
+- 附件 ↔ 用户消息绑定:流末向 session.state 写 `_solochat_attachments_<invocation_id>` = file_ids;读时按同 key 反查
+- 无 Python 服务,无 Mongo,单进程单 DB
 
 ## 用户可见文案
 
@@ -163,17 +164,22 @@ mechhub-back/
 - Go 端 helper:`internal/solochat/streamer.go::newSSE` + `c.Writer.Write` + `http.Flusher.Flush`。
 - 必须 set `X-Accel-Buffering: no` 头,防止 nginx / Cloudflare 缓冲整个响应。
 
-## Python Agent 对接(`internal/agent/`)
+## LLM 对接(`internal/llm/`)
 
-- Python ADK agent 跑在 `mechhub-agent` 项目,通过 `POST /chat`(multipart + SSE)对外。
-- Go 端唯一接入点:`internal/agent/client.go::Chat`,返回 `<-chan Event`。
-- **Go 不直接调 LLM SDK**(Google Gemini / OpenAI 之类),全部转给 Python。Go 只做权限 / 持久化 / 流式协议翻译。
-- 通信路径:本机开发 `http://localhost:8001`,Docker Compose `http://agent:8001`。`AGENT_BASE_URL` 走 env。
-- Python agent 端的 SSE 帧只有 `data: <json>\n\n` 行(没有 `event:` 行),用 `data.type` 字段区分。
+- LLM 实现走 ADK Go(`google.golang.org/adk` v1.2.0)+ Gemini 2.5 Flash 原生 SDK。**Go 自己跑 agent / tools / session**,没有 Python 服务,没有 LiteLLM 适配层
+- 边界包 `internal/llm/`:
+  - `runner.go::Bootstrap` —— 启动期建一次,绑定 Gemini 模型 + LlmAgent + tools + database session service
+  - `sse.go::StreamChat` —— 单次 chat 转 8 种 SSE 帧(`message_start` / `reasoning_delta` / `text_delta` / `text_complete` / `tool_call_start` / `tool_result` / `error` / `message_done`)
+  - `sessions.go::ListMessages` —— 读 ADK session,events 按 `invocation_id` 分组翻译给前端
+  - `tools/{ocr,grader}.go` —— OCR / 批改工具,LLM 自主决定何时调
+  - `prompts/` + `schemas/` —— 系统提示词与 grading JSON schema
+- 切其它 LLM(qwen / Claude / OpenAI)需实现 `model.LLM` 接口(`Name()` + `GenerateContent(ctx, req, stream) iter.Seq2[*LLMResponse, error]`),~200-400 行
+- Solochat 模块**只通过 `internal/llm.Service` 调 LLM**,不应该自己 import `google.golang.org/genai` 或 `google.golang.org/adk` —— 把 LLM 复杂度关在 `internal/llm/` 里
 
 ## Docker
 
-- 父目录 `mechhub/docker-compose.yml` 起 3 个服务:`go-backend`(暴露 8080)、`agent`(只在 Compose 网络内)、`mongo`(持久化卷)。
-- 容器间用服务名互访:`http://agent:8001`、`mongodb://mongo:27017`。
-- 各服务 `.env` 走 `env_file:` 引用,**不要 commit 真值**。
-- 本地开发不强制走 Docker,`go run .` + Python `uvicorn` 两个进程也行,只需把 `AGENT_BASE_URL` 改成 localhost。
+- 父目录 `mechhub/docker-compose.yml` 起 2 个服务:`go-backend`(暴露 8080)+ `mysql:8`(持久化卷)。轮 7 起 `agent` 和 `mongo` 都退场了
+- 容器间互访:`mysql:3306`;DSN 走 env `MYSQL_DSN`
+- 各服务 `.env` 走 `env_file:` 引用,**不要 commit 真值**
+- 本地开发不强制走 Docker,`go run .` 单进程即可;只要本机起一个 MySQL(brew / docker) + 配好 `MYSQL_DSN` / `GEMINI_API_KEY` / `DOCUMENTAI_*` 就行
+- Document AI 鉴权:`GOOGLE_APPLICATION_CREDENTIALS` 指向 ADC JSON,或在容器里挂 service account

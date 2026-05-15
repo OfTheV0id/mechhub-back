@@ -22,7 +22,6 @@ type Config struct {
 	OSS      OSSConfig
 	Avatar   AvatarConfig
 	Google   GoogleConfig
-	Agent    AgentConfig
 	Solochat SolochatConfig
 }
 
@@ -79,11 +78,6 @@ type GoogleConfig struct {
 	DefaultReturnURL string
 }
 
-type AgentConfig struct {
-	BaseURL string
-	Timeout time.Duration
-}
-
 type SolochatConfig struct {
 	MaxAttachmentsPerMessage int
 	MaxFileSize              int64
@@ -137,10 +131,6 @@ func Load() *Config {
 			ClientSecret:     requireEnv("GOOGLE_CLIENT_SECRET"),
 			RedirectURL:      requireEnv("GOOGLE_REDIRECT_URL"),
 			DefaultReturnURL: requireEnv("GOOGLE_DEFAULT_RETURN_URL"),
-		},
-		Agent: AgentConfig{
-			BaseURL: requireEnv("AGENT_BASE_URL"),
-			Timeout: time.Duration(getInt("AGENT_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
 		},
 		Solochat: SolochatConfig{
 			MaxAttachmentsPerMessage: getInt("SOLOCHAT_MAX_ATTACHMENTS_PER_MESSAGE", 4),
