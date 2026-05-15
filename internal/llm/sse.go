@@ -3,8 +3,10 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
@@ -91,6 +93,11 @@ func (s *Service) StreamChat(
 	}) {
 		if err != nil {
 			gotErr = err
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				finishReason = "cancelled"
+				// 用户主动停,不算 error,跳过 error 帧
+				continue
+			}
 			finishReason = "error"
 			yield(StreamFrame{
 				Type: FrameError, MessageID: messageID,
@@ -104,14 +111,23 @@ func (s *Service) StreamChat(
 		emitEvent(ev, messageID, &textBuf, yield)
 	}
 
+	// runner.Run 可能在 ctx 取消后悄无声息退出(没有 yield error),
+	// 这里兜一次底:只要 ctx 已取消就标 cancelled。
+	if finishReason == "stop" && errors.Is(ctx.Err(), context.Canceled) {
+		finishReason = "cancelled"
+	}
+
 	flushText()
 
 	// 流末把附件绑定写到 session.state,用 round 6 沿用的 key 格式。
-	if gotErr == nil && len(opts.FileIDs) > 0 && invocation != "" {
-		if err := s.appendAttachmentBinding(ctx, userID, sessionID, invocation, opts.FileIDs); err != nil {
-			// 不阻塞响应,只在 message_done 里把 finishReason 标 error
+	// 用户取消时也写一份 —— 部分 events 已落 MySQL,绑定保留方便复用。
+	if len(opts.FileIDs) > 0 && invocation != "" && finishReason != "error" {
+		// 取消的 ctx 已经 done,但 append_event 的写操作要新 ctx 撑过去
+		bindCtx, bindCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.appendAttachmentBinding(bindCtx, userID, sessionID, invocation, opts.FileIDs); err != nil {
 			fmt.Printf("llm: append attachment binding: %v\n", err)
 		}
+		bindCancel()
 	}
 
 	yield(StreamFrame{Type: FrameMessageDone, MessageID: messageID, FinishReason: finishReason})

@@ -9,6 +9,31 @@
 
 ---
 
+## Claude 轮 7.1 — 2026-05-15 — 加 Stop API
+
+### 功能
+
+1. **`POST /api/solochat/conversations/:id/messages/stop`** 取消该对话内
+   in-flight 的 SSE stream。幂等(没有 in-flight 也返 200)。鉴权同其它端点
+2. **implicit-cancel-on-new-send**:同一对话再发 `/stream` 时,自动取消旧的
+   in-flight stream,与 ChatGPT / Claude UI 行为一致
+3. **`finish_reason="cancelled"`**:用户主动停时,`message_done` 帧的
+   `finish_reason` 是 `cancelled`,**不再发 `error` 帧**。前端可据此区分
+   "用户停的" vs "agent 错的"
+
+### 实现
+
+- `internal/solochat/service.go`:`Service.activeStreams sync.Map` 记录
+  `userID:conversationID → *streamHandle{cancel}`;`SendMessageStream`
+  入口 `Swap` 注册 + cancel 旧 entry,出口 `CompareAndDelete` 防误删
+- `internal/llm/sse.go::StreamChat`:在 iter 循环和退出后双重检测
+  `context.Canceled`,把 finishReason 改成 `cancelled`;附件绑定的
+  append_event 用独立 timeout ctx,不被取消 ctx 影响
+- 新 handler / route / Postman 文件
+- `stop_test.go`:并发原语单测覆盖 Swap / Cancel / CompareAndDelete 三个场景
+
+---
+
 ## Claude 轮 7 — 2026-05-15 — Python 退役,Go + ADK Go + MySQL 单仓收敛
 
 ### ⚠️ 破坏性变更

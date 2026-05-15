@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,15 +27,36 @@ var (
 	ErrTooManyAttachments = errors.New("solochat: too many attachments")
 )
 
+// streamHandle 持有 in-flight stream 的 cancel,挂在 Service.activeStreams 上。
+// 用 pointer 作 value 是为了 sync.Map.CompareAndDelete 能精确比对 —— 防止
+// 新 stream 替换旧 entry 后,旧 stream 退出时把新 entry 误删。
+type streamHandle struct {
+	cancel context.CancelFunc
+}
+
 type Service struct {
-	repo *Repo
-	llm  *llm.Service
-	oss  *storage.OSS
-	cfg  *config.Config
+	repo          *Repo
+	llm           *llm.Service
+	oss           *storage.OSS
+	cfg           *config.Config
+	activeStreams sync.Map // key: userID + ":" + conversationID → *streamHandle
 }
 
 func NewService(repo *Repo, llmSvc *llm.Service, oss *storage.OSS, cfg *config.Config) *Service {
 	return &Service{repo: repo, llm: llmSvc, oss: oss, cfg: cfg}
+}
+
+// StopStream 取消指定用户在指定对话内正在跑的 stream(如果有)。多次调用幂等。
+// 真正的 sync.Map 删除留给 SendMessageStream 自己 defer 干,避免删错(新 stream
+// 可能在 cancel 后立刻替换了 entry)。
+func (s *Service) StopStream(userID, conversationID string) {
+	if h, ok := s.activeStreams.Load(streamKey(userID, conversationID)); ok {
+		h.(*streamHandle).cancel()
+	}
+}
+
+func streamKey(userID, conversationID string) string {
+	return userID + ":" + conversationID
 }
 
 var allowedMimeKind = map[string]string{
@@ -237,7 +259,19 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID strin
 //  4. 调 llm.StreamChat 把 ADK 流式事件翻译成 SSE 帧
 //  5. 首条消息后自动命名 + 触发 TouchConversation
 func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string) {
-	ctx := c.Request.Context()
+	// 派生一个本 stream 专属的 cancel ctx,挂到 activeStreams。同 conversation
+	// 有未完的 stream(用户没等回就再发,或两个标签同时发)时,先把旧 stream
+	// cancel 掉,新 stream 替换 entry,UX 跟 ChatGPT 一致。
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+
+	handle := &streamHandle{cancel: cancel}
+	key := streamKey(userID, conversationID)
+	if old, loaded := s.activeStreams.Swap(key, handle); loaded {
+		old.(*streamHandle).cancel()
+	}
+	defer s.activeStreams.CompareAndDelete(key, handle)
+
 	w := newSSE(c)
 
 	conv, err := s.repo.FindConversation(ctx, conversationID, userID)

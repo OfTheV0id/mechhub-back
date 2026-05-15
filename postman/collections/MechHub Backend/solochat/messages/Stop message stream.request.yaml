@@ -1,0 +1,23 @@
+$kind: http-request
+name: Stop message stream
+description: |
+  Cancel the current in-flight SSE stream for this conversation
+  (if any). Idempotent — returns 200 even when nothing is running.
+
+  Cancellation chain: cancel ctx → ADK Go runner.Run exits its
+  iter.Seq2 → Gemini API receives abort → llm.StreamChat emits a
+  final `message_done` frame with `finish_reason="cancelled"` (no
+  `error` frame) → the SSE response on the original /stream request
+  closes naturally.
+
+  Any events ADK has already written to MySQL stay (the user's UI
+  shows the truncated assistant reply, like ChatGPT's stop button).
+
+  Implicit-cancel: posting a new /stream for the same conversation
+  while a previous one is still running also calls this internally
+  to avoid two concurrent agent runs on one session.
+url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stop"
+method: POST
+headers:
+  Accept: application/json
+order: 2200

@@ -103,6 +103,17 @@ func (h *Handler) SendMessageStream(c *gin.Context) {
 	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments)
 }
 
+// StopMessage 取消当前用户在该对话内正在跑的 stream(如果有)。
+// 幂等:没有 in-flight stream 也返 200。
+// 触发链路:cancel ctx → runner.Run 退出 iter.Seq2 → Gemini API 收到 abort
+// → StreamChat 发 message_done{finish_reason:"cancelled"} → SSE 流自然结束。
+func (h *Handler) StopMessage(c *gin.Context) {
+	id := c.Param("id")
+	uid := c.MustGet(middleware.CtxUserID).(string)
+	h.svc.StopStream(uid, id)
+	response.OK(c, gin.H{"message": "已停止"})
+}
+
 func (h *Handler) UploadAttachment(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
