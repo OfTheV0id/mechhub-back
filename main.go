@@ -28,6 +28,9 @@ func main() {
 	if err := db.MaybeDropLegacyGradingCollections(ctx, mongoDB); err != nil {
 		log.Fatalf("drop legacy grading collections: %v", err)
 	}
+	if err := db.MaybeDropLegacyMessages(ctx, mongoDB); err != nil {
+		log.Fatalf("drop legacy messages collections: %v", err)
+	}
 
 	sessions := session.NewStore(mongoDB, cfg.Session.TTL)
 	mailer := mail.New(cfg)

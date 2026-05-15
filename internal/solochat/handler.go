@@ -93,7 +93,7 @@ func (h *Handler) ListMessages(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
-	_, dtos, err := h.svc.ListMessages(c.Request.Context(), id, uid)
+	dtos, err := h.svc.ListMessages(c.Request.Context(), id, uid)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			response.Fail(c, 404, response.CodeNotFound, "对话不存在")

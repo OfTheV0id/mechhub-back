@@ -1,6 +1,16 @@
 $kind: http-request
 name: List messages
-description: List all messages of a conversation, oldest first.
+description: |
+  List all messages of a conversation, oldest first.
+
+  自轮 6 起,本端点由 Go 代理 Python 的 `GET /sessions/:id/messages`,
+  消息源是 mechhub-agent 的 ADK SQL 库(events + state)。Go 端只负责
+  hydrate user message 的 attachments[] 元数据(URL / MIME / 文件名 /
+  大小,从 Mongo `uploaded_files` 取)。
+
+  返回 MessageDTO[] 形态与轮 5 一致,parts 类型:text / thinking /
+  tool_use / tool_result。`Message.id` 不再是 Mongo ObjectID,而是
+  ADK event UUID(36 字符)。
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages"
 method: GET
 headers:

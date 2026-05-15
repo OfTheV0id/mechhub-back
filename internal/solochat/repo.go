@@ -12,19 +12,18 @@ import (
 
 var ErrNotFound = errors.New("solochat: not found")
 
+// Repo 只剩 conversation 元数据(title/userID/时间戳)与附件元信息
+// (uploaded_files 集合)。消息流(events / state / OCR 缓存)整体迁到
+// ADK 的 MySQL,Go 通过 agent.Client.FetchMessages 拿翻译好的 DTO。
 type Repo struct {
 	conversations *mongo.Collection
-	messages      *mongo.Collection
 	files         *mongo.Collection
-	messageFiles  *mongo.Collection
 }
 
 func NewRepo(db *mongo.Database) *Repo {
 	return &Repo{
 		conversations: db.Collection("solochat_conversations"),
-		messages:      db.Collection("solochat_messages"),
 		files:         db.Collection("uploaded_files"),
-		messageFiles:  db.Collection("solochat_message_files"),
 	}
 }
 
@@ -90,43 +89,7 @@ func (r *Repo) DeleteConversation(ctx context.Context, id, userID bson.ObjectID)
 	if res.DeletedCount == 0 {
 		return ErrNotFound
 	}
-	_, err = r.messages.DeleteMany(ctx, bson.M{"conversation_id": id})
-	return err
-}
-
-func (r *Repo) CountConversationMessages(ctx context.Context, conversationID bson.ObjectID) (int64, error) {
-	return r.messages.CountDocuments(ctx, bson.M{"conversation_id": conversationID})
-}
-
-func (r *Repo) InsertMessage(ctx context.Context, m *Message) error {
-	_, err := r.messages.InsertOne(ctx, m)
-	return err
-}
-
-func (r *Repo) ListMessages(ctx context.Context, conversationID bson.ObjectID) ([]Message, error) {
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}})
-	cur, err := r.messages.Find(ctx, bson.M{"conversation_id": conversationID}, opts)
-	if err != nil {
-		return nil, err
-	}
-	var list []Message
-	if err := cur.All(ctx, &list); err != nil {
-		return nil, err
-	}
-	return list, nil
-}
-
-func (r *Repo) FinalizeMessage(ctx context.Context, id bson.ObjectID, status string, parts []MessagePart, finishReason string) error {
-	_, err := r.messages.UpdateOne(
-		ctx,
-		bson.M{"_id": id},
-		bson.M{"$set": bson.M{
-			"status":        status,
-			"parts":         parts,
-			"finish_reason": finishReason,
-		}},
-	)
-	return err
+	return nil
 }
 
 func (r *Repo) InsertFile(ctx context.Context, f *UploadedFile) error {
@@ -159,35 +122,4 @@ func (r *Repo) FindFilesByIDs(ctx context.Context, ids []bson.ObjectID, ownerID 
 		return nil, err
 	}
 	return list, nil
-}
-
-func (r *Repo) BindMessageFiles(ctx context.Context, messageID bson.ObjectID, fileIDs []bson.ObjectID) error {
-	if len(fileIDs) == 0 {
-		return nil
-	}
-	docs := make([]any, len(fileIDs))
-	for i, fid := range fileIDs {
-		docs[i] = MessageFile{ID: bson.NewObjectID(), MessageID: messageID, FileID: fid}
-	}
-	_, err := r.messageFiles.InsertMany(ctx, docs)
-	return err
-}
-
-func (r *Repo) FindMessageFiles(ctx context.Context, messageIDs []bson.ObjectID) (map[bson.ObjectID][]bson.ObjectID, error) {
-	if len(messageIDs) == 0 {
-		return nil, nil
-	}
-	cur, err := r.messageFiles.Find(ctx, bson.M{"message_id": bson.M{"$in": messageIDs}})
-	if err != nil {
-		return nil, err
-	}
-	var binds []MessageFile
-	if err := cur.All(ctx, &binds); err != nil {
-		return nil, err
-	}
-	out := make(map[bson.ObjectID][]bson.ObjectID, len(binds))
-	for _, b := range binds {
-		out[b.MessageID] = append(out[b.MessageID], b.FileID)
-	}
-	return out, nil
 }

@@ -9,6 +9,60 @@
 
 ---
 
+## Claude 轮 6 — 2026-05-15 — 单一事实源:ADK Session 持久化到 SQL,Go 不再存消息
+
+### ⚠️ 破坏性变更
+
+1. **消息源整体迁到 mechhub-agent 的 ADK SQL 库,`solochat_messages` 集合废弃**
+   - Mechhub-agent 用 ADK 官方 `DatabaseSessionService` 持久化 session events + state(含 OCR 缓存、本期新增的附件绑定),开发默认 `sqlite+aiosqlite:///./adk_sessions.db`,线上切 `mysql+asyncmy://...`
+   - Go 端的 `solochat_messages` / `solochat_message_files` 两张表彻底不用,`Message` / `MessageFile` struct + 相关 repo 方法删除
+   - `GET /api/solochat/conversations/:id/messages` 改为**代理** Python `GET /sessions/:id/messages`,Python 把 ADK events 按 invocation_id 分组翻译成 `MessageDTO[]`,Go 端只 hydrate 附件元数据
+   - 收益:Python 重启不再失忆;OCR 缓存跨重启不丢;同一份数据,前端按 part type 选择性展示
+   - **前端**:`GET /messages` 响应形状不变(`{messages: [...]}`),但 `Message.id` 不再是 Mongo ObjectID,变成 ADK event UUID。代码继续把它当字符串 key 用即可,不要硬编码长度
+
+2. **`POST /messages/stream` 不再持久化 user / assistant 消息**
+   - Go 端 `SendMessageStream` 不再 `InsertMessage` / `FinalizeMessage`,真正持久化全在 Python 的 ADK 流里完成
+   - `StreamUserInput` 事件的 `message.id` 改为 `pending-user-<random>` 临时占位;待 stream 结束后,前端如需 canonical ID 可重新 `GET /messages` 拿
+   - `Message.status` 字段在持久化层取消(ADK events 本身没有 streaming/completed/failed 状态机概念),响应里固定回 `completed`;失败走 `error` 事件,不再二态
+
+3. **新增 env `SOLOCHAT_MIGRATE_DROP_MESSAGES`**
+   - 默认 false。首次部署轮 6 时设 true,会启动期一次性 drop `solochat_messages` + `solochat_message_files` 两个集合(类似轮 4 的 `SOLOCHAT_MIGRATE_DROP_GRADING`),drop 完改回 false 即可
+
+4. **`mechhub-agent` 新增 env `ADK_DB_URL`**
+   - 开发不设默认走 `sqlite+aiosqlite:///./adk_sessions.db`(进程工作目录下)
+   - 生产请设 `mysql+asyncmy://user:pwd@mysql:3306/mechhub_adk` 等异步驱动地址
+   - 注意:ADK `DatabaseSessionService` 走 SQLAlchemy **异步引擎**,所以 sqlite 必须 `+aiosqlite`、mysql 必须 `+asyncmy`(或 `+aiomysql`),同步驱动 `pymysql` 会启动报错
+   - 父目录的 `docker-compose.yml` 需要新增 `mysql:8` 服务并把 `ADK_DB_URL` 加入 agent 的 env(本仓库不维护 compose 文件,请同步改父目录)
+
+### 功能
+
+5. **POST /chat 接受新 form 字段 `file_ids`**:Go 端发起时把附件的 Mongo `uploaded_files._id` 按 files 顺序附带传过去(JSON 数组字符串)。Python 用作两件事:
+   - 流跑完后写 session.state 的 `_solochat_attachments_<invocation_id>` 键,绑定附件与本轮用户消息
+   - 落盘文件名前缀从时间戳改成 `<file_id>-<filename>`,让 `ocr_images_cached` 工具的 cache key 用 file_id 反查,跨重启稳定
+
+6. **新增 `GET /sessions/:session_id/messages` (Python 端)**:把 ADK events 按 invocation_id 分组,user 与 model events 折成两条 `MessageDTO`,parts 类型齐全(text/thinking/tool_use/tool_result),user message 带 `attachments: [{id}]`(file_id 数组,URL/MIME 等元数据 Go 端 hydrate)
+
+### 移除
+
+7. **删除 Go 端文件 / 函数**:
+   - `internal/solochat/model.go`:`Message`、`MessageFile`、`MessageStatusStreaming/Completed/Failed`、`textPart`、`toMessageDTO`
+   - `internal/solochat/repo.go`:`messages` / `messageFiles` 集合句柄;`InsertMessage` / `ListMessages` / `FinalizeMessage` / `BindMessageFiles` / `FindMessageFiles` / `CountConversationMessages`
+   - `internal/db/mongo.go`:`solochat_messages` 与 `solochat_message_files` 的索引注册
+   - `internal/solochat/service.go::consumeAgentStream` 简化为 `forwardAgentStream`(不再 parts 累积)
+
+### 杂项
+
+8. **HANDOFF.md** 更新对接图与典型时序;**Postman**:`List messages` 描述讲清是代理 Python 端点,`Send message stream` 增加 file_ids 字段
+9. **CLAUDE.md「数据库」段** 同步:删 `solochat_messages` 描述,加一段「消息源由 mechhub-agent ADK SQL 库托管」说明
+
+### 编码前未验证假设(已实测)
+
+- ADK 1.33 `DatabaseSessionService` 走 SQLAlchemy **异步**引擎 ✅(需 `+aiosqlite` / `+asyncmy`)
+- `Runner.run_async(invocation_id=...)` 被 ADK 内部覆盖为 `e-<uuid>`,**外部传入无效** —— 改为流过程中捕获实际 invocation_id,流末追加 state-only event 写 state_delta
+- 同 session 跨 SessionService 实例重建,events + state 完整保留 ✅(SQLite 实测)
+
+---
+
 ## Claude 轮 5 — 2026-05-14 — 多模态附件真喂 LLM + 协议切到 SSE
 
 ### ⚠️ 破坏性变更

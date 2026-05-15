@@ -112,10 +112,18 @@ mechhub-back/
   - `users.email` unique
   - `sessions.expires_at` TTL=0
   - `tokens.expires_at` TTL=0,`tokens.user_id+kind` 复合索引
-  - solochat 7 个集合的 user_id / conversation_id / task_id 索引(详见 `internal/db/mongo.go`)
+  - `solochat_conversations.user_id+updated_at`
+  - `uploaded_files.owner_user_id`
 - 用 `bson.ObjectID`,不用 string ID。
-- 集合命名:**用户系统** `users` / `sessions` / `tokens`;**Solochat** 加 `solochat_` 前缀(`solochat_conversations` / `solochat_messages` / `solochat_grading_tasks` / 等);**通用** `uploaded_files`(头像 + solochat 附件共用)。
+- 集合命名:**用户系统** `users` / `sessions` / `tokens`;**Solochat** 加 `solochat_` 前缀(`solochat_conversations` 等);**通用** `uploaded_files`(头像 + solochat 附件共用)。
 - 加新模块时新建的集合应该加同样的模块名前缀,便于看名字就知道归属。
+
+### 消息源 ≠ Mongo(轮 6 起)
+
+- 对话消息(events / state / OCR 缓存 / 附件绑定)**不在 Go 这边的 Mongo**,而是由 `mechhub-agent` 用 ADK 官方 `DatabaseSessionService` 持久化到 SQL(开发 sqlite,生产 mysql)
+- Go 只保留 `solochat_conversations`(标题 / 用户 / 时间戳)+ `uploaded_files`(OSS 附件元信息)+ 用户系统三件套
+- `GET /messages` 由 Go 代理 Python `GET /sessions/:id/messages`,Python 把 ADK events 翻译成 `MessageDTO[]`,Go 只 hydrate 附件 URL / MIME 等元信息
+- 旧 `solochat_messages` / `solochat_message_files` 集合废弃,启动期 `SOLOCHAT_MIGRATE_DROP_MESSAGES=true` 自动 drop
 
 ## 用户可见文案
 

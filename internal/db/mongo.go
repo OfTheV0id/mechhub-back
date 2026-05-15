@@ -58,20 +58,8 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		return err
 	}
 
-	if _, err := db.Collection("solochat_messages").Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "conversation_id", Value: 1}, {Key: "created_at", Value: 1}},
-	}); err != nil {
-		return err
-	}
-
 	if _, err := db.Collection("uploaded_files").Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{{Key: "owner_user_id", Value: 1}},
-	}); err != nil {
-		return err
-	}
-
-	if _, err := db.Collection("solochat_message_files").Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "message_id", Value: 1}},
 	}); err != nil {
 		return err
 	}
@@ -90,6 +78,26 @@ func MaybeDropLegacyGradingCollections(ctx context.Context, db *mongo.Database) 
 		"solochat_grading_tasks",
 		"solochat_grading_task_files",
 		"solochat_grading_annotations",
+	} {
+		if err := db.Collection(name).Drop(ctx); err != nil {
+			return err
+		}
+		log.Printf("dropped legacy collection: %s", name)
+	}
+	return nil
+}
+
+// MaybeDropLegacyMessages 在 SOLOCHAT_MIGRATE_DROP_MESSAGES=true 时把
+// 轮 6 之前的 solochat_messages 与 solochat_message_files 一次性删掉。
+// 新流程下消息源(events / state / 附件绑定)全部在 mechhub-agent 的
+// ADK MySQL session 里;Mongo 这两张表彻底不再使用。
+func MaybeDropLegacyMessages(ctx context.Context, db *mongo.Database) error {
+	if strings.ToLower(os.Getenv("SOLOCHAT_MIGRATE_DROP_MESSAGES")) != "true" {
+		return nil
+	}
+	for _, name := range []string{
+		"solochat_messages",
+		"solochat_message_files",
 	} {
 		if err := db.Collection(name).Drop(ctx); err != nil {
 			return err

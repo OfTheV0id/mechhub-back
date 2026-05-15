@@ -11,10 +11,6 @@ const (
 	RoleUser      = "user"
 	RoleAssistant = "assistant"
 
-	MessageStatusStreaming = "streaming"
-	MessageStatusCompleted = "completed"
-	MessageStatusFailed    = "failed"
-
 	PartText       = "text"
 	PartThinking   = "thinking"
 	PartToolUse    = "tool_use"
@@ -33,27 +29,6 @@ type Conversation struct {
 	UpdatedAt time.Time     `bson:"updated_at"`
 }
 
-type MessagePart struct {
-	Type       string          `bson:"type" json:"type"`
-	Text       string          `bson:"text,omitempty" json:"text,omitempty"`
-	ToolUseID  string          `bson:"tool_use_id,omitempty" json:"tool_use_id,omitempty"`
-	Name       string          `bson:"name,omitempty" json:"name,omitempty"`
-	Input      json.RawMessage `bson:"input,omitempty" json:"input,omitempty"`
-	Output     json.RawMessage `bson:"output,omitempty" json:"output,omitempty"`
-	IsError    bool            `bson:"is_error,omitempty" json:"is_error,omitempty"`
-	ElapsedMS  int             `bson:"elapsed_ms,omitempty" json:"elapsed_ms,omitempty"`
-}
-
-type Message struct {
-	ID             bson.ObjectID `bson:"_id"`
-	ConversationID bson.ObjectID `bson:"conversation_id"`
-	Role           string        `bson:"role"`
-	Parts          []MessagePart `bson:"parts"`
-	Status         string        `bson:"status"`
-	FinishReason   string        `bson:"finish_reason,omitempty"`
-	CreatedAt      time.Time     `bson:"created_at"`
-}
-
 type UploadedFile struct {
 	ID           bson.ObjectID `bson:"_id"`
 	OwnerUserID  bson.ObjectID `bson:"owner_user_id"`
@@ -65,10 +40,17 @@ type UploadedFile struct {
 	CreatedAt    time.Time     `bson:"created_at"`
 }
 
-type MessageFile struct {
-	ID        bson.ObjectID `bson:"_id"`
-	MessageID bson.ObjectID `bson:"message_id"`
-	FileID    bson.ObjectID `bson:"file_id"`
+// MessagePart 是前端渲染的最小单位,由 Go 把 Python AgentMessagePart 转一下
+// 复用本结构。落 Mongo 不再需要(消息源全部在 ADK MySQL),只用作 DTO 字段。
+type MessagePart struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	ElapsedMS int             `json:"elapsed_ms,omitempty"`
 }
 
 type AttachmentDTO struct {
@@ -150,20 +132,4 @@ func toConversationDTO(c *Conversation) ConversationDTO {
 		CreatedAt: c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}
-}
-
-func toMessageDTO(m *Message) MessageDTO {
-	return MessageDTO{
-		ID:             m.ID.Hex(),
-		ConversationID: m.ConversationID.Hex(),
-		Role:           m.Role,
-		Parts:          m.Parts,
-		Status:         m.Status,
-		FinishReason:   m.FinishReason,
-		CreatedAt:      m.CreatedAt.Format(time.RFC3339),
-	}
-}
-
-func textPart(text string) MessagePart {
-	return MessagePart{Type: PartText, Text: text}
 }

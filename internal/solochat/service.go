@@ -184,48 +184,89 @@ func (s *Service) DeleteConversation(ctx context.Context, id, userID bson.Object
 	return s.repo.DeleteConversation(ctx, id, userID)
 }
 
-func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.ObjectID) ([]Message, []MessageDTO, error) {
+// ListMessages 代理 Python /sessions/{id}/messages,拿到翻译好的 DTO 后
+// 把每条 user message 的 attachments(只含 file_id)hydrate 成完整
+// AttachmentDTO(URL / MIME / 文件名 / 大小)。
+func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.ObjectID) ([]MessageDTO, error) {
 	if _, err := s.repo.FindConversation(ctx, conversationID, userID); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	msgs, err := s.repo.ListMessages(ctx, conversationID)
+	rows, err := s.agent.FetchMessages(ctx, conversationID.Hex())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	messageIDs := make([]bson.ObjectID, len(msgs))
-	for i, m := range msgs {
-		messageIDs[i] = m.ID
-	}
-	bindings, err := s.repo.FindMessageFiles(ctx, messageIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-	allFileIDs := make([]bson.ObjectID, 0)
-	for _, ids := range bindings {
-		allFileIDs = append(allFileIDs, ids...)
-	}
-	files, err := s.repo.FindFilesByIDs(ctx, allFileIDs, userID)
-	if err != nil {
-		return nil, nil, err
-	}
-	fileByID := make(map[bson.ObjectID]UploadedFile, len(files))
-	for _, f := range files {
-		fileByID[f.ID] = f
+	if len(rows) == 0 {
+		return []MessageDTO{}, nil
 	}
 
-	dtos := make([]MessageDTO, len(msgs))
-	for i := range msgs {
-		dto := toMessageDTO(&msgs[i])
-		for _, fid := range bindings[msgs[i].ID] {
-			if f, ok := fileByID[fid]; ok {
-				dto.Attachments = append(dto.Attachments, s.ToAttachmentDTO(&f))
-			}
+	fileIDSet := make(map[string]struct{})
+	for _, r := range rows {
+		for _, a := range r.Attachments {
+			fileIDSet[a.ID] = struct{}{}
 		}
-		dtos[i] = dto
 	}
-	return msgs, dtos, nil
+	fileMap := make(map[bson.ObjectID]UploadedFile)
+	if len(fileIDSet) > 0 {
+		ids := make([]bson.ObjectID, 0, len(fileIDSet))
+		for fid := range fileIDSet {
+			oid, err := bson.ObjectIDFromHex(fid)
+			if err != nil {
+				continue
+			}
+			ids = append(ids, oid)
+		}
+		files, err := s.repo.FindFilesByIDs(ctx, ids, userID)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			fileMap[f.ID] = f
+		}
+	}
+
+	out := make([]MessageDTO, 0, len(rows))
+	for _, r := range rows {
+		parts := make([]MessagePart, 0, len(r.Parts))
+		for _, p := range r.Parts {
+			parts = append(parts, MessagePart{
+				Type:      p.Type,
+				Text:      p.Text,
+				ToolUseID: p.ToolUseID,
+				Name:      p.Name,
+				Input:     p.Input,
+				Output:    p.Output,
+				IsError:   p.IsError,
+			})
+		}
+		dto := MessageDTO{
+			ID:             r.ID,
+			ConversationID: conversationID.Hex(),
+			Role:           r.Role,
+			Parts:          parts,
+			Status:         r.Status,
+			FinishReason:   r.FinishReason,
+			CreatedAt:      r.CreatedAt,
+		}
+		for _, a := range r.Attachments {
+			oid, err := bson.ObjectIDFromHex(a.ID)
+			if err != nil {
+				continue
+			}
+			f, ok := fileMap[oid]
+			if !ok {
+				continue
+			}
+			dto.Attachments = append(dto.Attachments, s.ToAttachmentDTO(&f))
+		}
+		out = append(out, dto)
+	}
+	return out, nil
 }
 
+// SendMessageStream 收到前端发消息请求后,Go 端不再 insert/finalize 消息,
+// 只:校验权限 + 下载附件 + 转发到 Python /chat + 把 SSE 帧透给前端。
+// 真正的持久化(events / state / OCR 缓存 / 附件绑定)全在 Python 那边
+// 通过 ADK 的 DatabaseSessionService 完成。
 func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.ObjectID, content string, attachmentIDs []bson.ObjectID) {
 	ctx := c.Request.Context()
 	w := newSSE(c)
@@ -249,77 +290,49 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 		}
 	}
 
-	count, _ := s.repo.CountConversationMessages(ctx, conversationID)
-	isFirstMessage := count == 0
+	// 用 conv.UpdatedAt == conv.CreatedAt 判定首条消息(尚未触发过 TouchConversation)
+	isFirstMessage := conv.CreatedAt.Equal(conv.UpdatedAt)
 
-	now := time.Now()
-	userMsg := &Message{
-		ID:             bson.NewObjectID(),
-		ConversationID: conversationID,
+	// 立即把用户消息回显给前端,体感更快;真正 ID 由 ADK 持久化后产生,
+	// 前端在 stream 结束后用 GET /messages 拿回 canonical ID。
+	userPending := MessageDTO{
+		ID:             "pending-user-" + bson.NewObjectID().Hex(),
+		ConversationID: conversationID.Hex(),
 		Role:           RoleUser,
-		Parts:          []MessagePart{textPart(content)},
-		Status:         MessageStatusCompleted,
-		CreatedAt:      now,
+		Parts:          []MessagePart{{Type: PartText, Text: content}},
+		Status:         "completed",
+		CreatedAt:      time.Now().Format(time.RFC3339),
 	}
-	if err := s.repo.InsertMessage(ctx, userMsg); err != nil {
-		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
-		return
-	}
-	if len(files) > 0 {
-		fileIDs := make([]bson.ObjectID, len(files))
-		for i, f := range files {
-			fileIDs[i] = f.ID
-		}
-		_ = s.repo.BindMessageFiles(ctx, userMsg.ID, fileIDs)
-	}
-	userDTO := toMessageDTO(userMsg)
 	for _, f := range files {
-		userDTO.Attachments = append(userDTO.Attachments, s.ToAttachmentDTO(&f))
+		userPending.Attachments = append(userPending.Attachments, s.ToAttachmentDTO(&f))
 	}
-	w.write(StreamEvent{Type: StreamUserInput, Message: &userDTO})
-
-	assistantMsg := &Message{
-		ID:             bson.NewObjectID(),
-		ConversationID: conversationID,
-		Role:           RoleAssistant,
-		Parts:          []MessagePart{},
-		Status:         MessageStatusStreaming,
-		CreatedAt:      time.Now(),
-	}
-	if err := s.repo.InsertMessage(ctx, assistantMsg); err != nil {
-		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
-		return
-	}
+	w.write(StreamEvent{Type: StreamUserInput, Message: &userPending})
 
 	inputs, closers, err := s.openAttachmentsForAgent(ctx, files)
 	if err != nil {
 		closeAll(closers)
-		_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, MessageStatusFailed, assistantMsg.Parts, "error")
-		w.write(StreamEvent{Type: StreamError, MessageID: assistantMsg.ID.Hex(), ErrorMsg: err.Error()})
+		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
+	}
+
+	fileIDs := make([]string, len(files))
+	for i, f := range files {
+		fileIDs[i] = f.ID.Hex()
 	}
 
 	events, err := s.agent.Chat(ctx, agent.ChatRequest{
 		SessionID: conversationID.Hex(),
 		Message:   content,
 		Files:     inputs,
+		FileIDs:   fileIDs,
 	})
 	closeAll(closers)
 	if err != nil {
-		_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, MessageStatusFailed, assistantMsg.Parts, "error")
-		w.write(StreamEvent{Type: StreamError, MessageID: assistantMsg.ID.Hex(), ErrorMsg: err.Error()})
+		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
 	}
 
-	parts, finishReason, streamErr := s.consumeAgentStream(events, assistantMsg.ID.Hex(), w)
-	status := MessageStatusCompleted
-	if streamErr != "" {
-		status = MessageStatusFailed
-	}
-	assistantMsg.Parts = parts
-	assistantMsg.Status = status
-	assistantMsg.FinishReason = finishReason
-	_ = s.repo.FinalizeMessage(ctx, assistantMsg.ID, status, parts, finishReason)
+	s.forwardAgentStream(events, w)
 
 	if isFirstMessage {
 		title := autoTitle(content)
@@ -335,27 +348,9 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 	}
 }
 
-func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string, w *sseWriter) ([]MessagePart, string, string) {
-	parts := make([]MessagePart, 0, 8)
-	finishReason := "stop"
-	streamErr := ""
-
-	var prevKind string
-	var textBuf strings.Builder
-	var thinkBuf strings.Builder
-
-	flushBuffers := func() {
-		if textBuf.Len() > 0 {
-			parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
-			textBuf.Reset()
-		}
-		if thinkBuf.Len() > 0 {
-			parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
-			thinkBuf.Reset()
-		}
-		prevKind = ""
-	}
-
+// forwardAgentStream 把 Python agent SSE 事件 1:1 转成 Go 端 SSE 帧,
+// 同时维持 25s 心跳。不再做 parts 累积(ADK 自己持久化)。
+func (s *Service) forwardAgentStream(events <-chan agent.Event, w *sseWriter) {
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
 
@@ -363,77 +358,33 @@ func (s *Service) consumeAgentStream(events <-chan agent.Event, messageID string
 		select {
 		case <-ticker.C:
 			if !w.heartbeat() {
-				flushBuffers()
-				return parts, finishReason, streamErr
+				return
 			}
 		case ev, ok := <-events:
 			if !ok {
-				flushBuffers()
-				return parts, finishReason, streamErr
+				return
 			}
-			ev.MessageID = messageID
 			switch ev.Type {
 			case agent.EventMessageStart:
-				w.write(StreamEvent{Type: StreamMessageStart, MessageID: messageID, Model: ev.Model})
+				w.write(StreamEvent{Type: StreamMessageStart, MessageID: ev.MessageID, Model: ev.Model})
 			case agent.EventReasoningDelta:
-				if prevKind == "text" && textBuf.Len() > 0 {
-					parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
-					textBuf.Reset()
-				}
-				thinkBuf.WriteString(ev.Delta)
-				prevKind = "thinking"
-				w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: messageID, Delta: ev.Delta})
+				w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: ev.MessageID, Delta: ev.Delta})
 			case agent.EventTextDelta:
-				if prevKind == "thinking" && thinkBuf.Len() > 0 {
-					parts = append(parts, MessagePart{Type: PartThinking, Text: thinkBuf.String()})
-					thinkBuf.Reset()
-				}
-				textBuf.WriteString(ev.Delta)
-				prevKind = "text"
-				w.write(StreamEvent{Type: StreamTextDelta, MessageID: messageID, Delta: ev.Delta})
+				w.write(StreamEvent{Type: StreamTextDelta, MessageID: ev.MessageID, Delta: ev.Delta})
 			case agent.EventTextComplete:
-				if ev.Text != "" {
-					textBuf.Reset()
-					textBuf.WriteString(ev.Text)
-				}
-				if textBuf.Len() > 0 {
-					parts = append(parts, MessagePart{Type: PartText, Text: textBuf.String()})
-					textBuf.Reset()
-				}
-				prevKind = ""
-				w.write(StreamEvent{Type: StreamTextComplete, MessageID: messageID, Text: ev.Text})
+				w.write(StreamEvent{Type: StreamTextComplete, MessageID: ev.MessageID, Text: ev.Text})
 			case agent.EventToolCallStart:
-				flushBuffers()
-				parts = append(parts, MessagePart{
-					Type:      PartToolUse,
-					ToolUseID: ev.ToolUseID,
-					Name:      ev.Name,
-					Input:     cloneRaw(ev.Input),
-				})
-				w.write(StreamEvent{Type: StreamToolCallStart, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Input: ev.Input})
+				w.write(StreamEvent{Type: StreamToolCallStart, MessageID: ev.MessageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Input: cloneRaw(ev.Input)})
 			case agent.EventToolResult:
-				parts = append(parts, MessagePart{
-					Type:      PartToolResult,
-					ToolUseID: ev.ToolUseID,
-					Name:      ev.Name,
-					Output:    cloneRaw(ev.Output),
-					IsError:   ev.IsError,
-					ElapsedMS: ev.ElapsedMS,
-				})
-				w.write(StreamEvent{Type: StreamToolResult, MessageID: messageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Output: ev.Output, IsError: ev.IsError, ElapsedMS: ev.ElapsedMS})
+				w.write(StreamEvent{Type: StreamToolResult, MessageID: ev.MessageID, ToolUseID: ev.ToolUseID, Name: ev.Name, Output: cloneRaw(ev.Output), IsError: ev.IsError, ElapsedMS: ev.ElapsedMS})
 			case agent.EventError:
-				streamErr = ev.Message
-				if streamErr == "" {
-					streamErr = "agent error"
+				errMsg := ev.Message
+				if errMsg == "" {
+					errMsg = "agent error"
 				}
-				finishReason = "error"
-				w.write(StreamEvent{Type: StreamError, MessageID: messageID, Code: ev.Code, ErrorMsg: streamErr})
+				w.write(StreamEvent{Type: StreamError, MessageID: ev.MessageID, Code: ev.Code, ErrorMsg: errMsg})
 			case agent.EventMessageDone:
-				flushBuffers()
-				if ev.FinishReason != "" {
-					finishReason = ev.FinishReason
-				}
-				w.write(StreamEvent{Type: StreamMessageDone, MessageID: messageID, FinishReason: finishReason})
+				w.write(StreamEvent{Type: StreamMessageDone, MessageID: ev.MessageID, FinishReason: ev.FinishReason})
 			}
 		}
 	}

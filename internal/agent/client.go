@@ -53,6 +53,34 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (<-chan Event, error
 	return out, nil
 }
 
+// FetchMessages 调 Python GET /sessions/{id}/messages,拿到该 ADK session
+// 翻译好的 MessageDTO 列表(parts 分类齐全:text / thinking / tool_use /
+// tool_result;user message 带 attachments:[{id}],由 Go 端 hydrate)。
+func (c *Client) FetchMessages(ctx context.Context, sessionID string) ([]AgentMessage, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/sessions/"+sessionID+"/messages", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return nil, nil
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("agent: fetch messages status %d", resp.StatusCode)
+	}
+	var wrap struct {
+		Messages []AgentMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrap); err != nil {
+		return nil, err
+	}
+	return wrap.Messages, nil
+}
+
 func buildMultipart(req ChatRequest) (io.Reader, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -62,6 +90,15 @@ func buildMultipart(req ChatRequest) (io.Reader, string, error) {
 	}
 	if err := w.WriteField("message", req.Message); err != nil {
 		return nil, "", err
+	}
+	if len(req.FileIDs) > 0 {
+		ids, err := json.Marshal(req.FileIDs)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := w.WriteField("file_ids", string(ids)); err != nil {
+			return nil, "", err
+		}
 	}
 
 	for _, f := range req.Files {

@@ -72,7 +72,9 @@ user_input → message_start → reasoning_delta* → tool_call_start
 | `error` | `message_id, code, error` | 异常 |
 | `message_done` | `message_id, finish_reason` | Agent 回合结束 |
 
-Message 持久化为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `tool_use` / `tool_result`。`GET /messages` 返回这些 parts,前端按数组顺序逐块渲染。
+Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `tool_use` / `tool_result`。`GET /messages` 返回这些 parts,前端按数组顺序逐块渲染。
+
+**轮 6 起,消息不再存 Mongo**:`GET /messages` 由 Go 代理 Python `GET /sessions/:id/messages`,Python 把 ADK SQL 库里的 events 翻译成 `MessageDTO[]`,Go 端按 user message 的 file_ids hydrate 出附件 URL / MIME 元信息。`StreamUserInput.message.id` 改为 `pending-user-<random>` 临时占位(流跑完前端可重新 GET 拿 canonical 的 ADK event UUID)。
 
 ### 关键技术决策
 
@@ -151,17 +153,20 @@ Message 持久化为 `Parts []MessagePart`,part type 可选:`text` / `thinking` 
 ### 4. Solochat:通用 agent chat(轮 4 重构)
 
 **职责划分**:
-- **Go 后端**:权限、会话、消息持久化(`Message.Parts []MessagePart`)、流式协议翻译、附件存储编排
-- **Python agent** (`mechhub-agent`, FastAPI + Google ADK):LLM 推理 + 工具调用,通过 `POST /chat`(multipart + SSE)对外。当前模型 `openai/qwen3.6-max-preview`,通过 LiteLlm 的 `extra_body={"enable_thinking": True}` 让 qwen 输出思考过程
+- **Go 后端**:权限、会话元数据、附件 OSS 编排、流式协议透传。**消息不在 Go 这边持久化**(轮 6 起,搬到 mechhub-agent 的 ADK SQL 库)
+- **Python agent** (`mechhub-agent`, FastAPI + Google ADK):LLM 推理 + 工具调用 + 消息持久化。`POST /chat`(multipart + SSE)发消息;`GET /sessions/:id/messages` 给 Go 代理拉历史;ADK `DatabaseSessionService` 走 `ADK_DB_URL`(开发 sqlite+aiosqlite,生产 mysql+asyncmy)
 - Go ↔ agent 用 HTTP,Docker Compose 内部 `http://agent:8001` 直连
 
 **为什么不在 Go 里跑 ADK**:Google ADK 只有 Python SDK。
 
 **关键代码位置**:
-- `internal/agent/{model,client}.go`:HTTP 客户端 + SSE 解析,`Event` 字段覆盖所有 8 种类型
-- `internal/solochat/`:6 个文件(model/repo/service/handler/route/streamer)。**`grading.go` 和 `events_hub.go` 已删除**
-- `internal/solochat/service.go::consumeAgentStream`:核心翻译循环,把 agent SSE 事件 1:1 写成 NDJSON 给前端,同时累积到 `Message.Parts` 落库
-- `mechhub-agent/server/sse.py::stream_chat`:Python 端统一生成器,把 ADK 事件流 + tool callback 队列合并发出
+- `internal/agent/{model,client}.go`:HTTP 客户端 + SSE 解析(POST /chat),以及 `FetchMessages`(GET /sessions/:id/messages)
+- `internal/solochat/`:6 个文件(model/repo/service/handler/route/streamer)。**`grading.go` / `events_hub.go` 已删除(轮 4);Message / MessageFile 持久化代码已删除(轮 6)**
+- `internal/solochat/service.go::forwardAgentStream`:1:1 透传 agent SSE 事件给前端,不再累积 parts
+- `internal/solochat/service.go::ListMessages`:代理 Python `/sessions/:id/messages`,hydrate 附件元信息
+- `mechhub-agent/server/sse.py::stream_chat`:Python 端统一生成器,流过程中捕获 ADK 真实 invocation_id,流末写 state_delta 把 file_ids 绑定到本轮 user event
+- `mechhub-agent/server/routes/sessions.py::list_messages`:把 ADK events 按 invocation_id 分组翻译成 MessageDTO
+- `mechhub-agent/server/runner.py`:ADK `DatabaseSessionService` 单例,`ADK_DB_URL` 走 env
 - `mechhub-agent/mechhub_agent/callbacks.py`:`before/after_tool_callback` 通过 `contextvars.ContextVar` 拿到本次请求的 `asyncio.Queue`,把 `tool_call_start` / `tool_result` 入队
 - `mechhub-agent/mechhub_agent/agent.py::_build_model`:控制 `enable_thinking` 开关
 
@@ -171,7 +176,11 @@ Message 持久化为 `Parts []MessagePart`,part type 可选:`text` / `thinking` 
 
 **批改不是独立功能**:LLM 自主决定何时调 `grade_submission(image_paths)` 工具。工具会自动用 OCR 缓存(本次 session state),返回完整 `GradingOutput` JSON。前端从对应 `tool_result.output` 渲染分数 + 评语 + 步骤分析。**`/grading-tasks/*` 端点已经全部下线**。
 
-**agent session 持久化**:agent 当前 in-memory session,重启丢。所以 Go 端每次都重传文件。后续可以把 OCR 缓存搬到 mongo,但暂时 OK。
+**agent session 持久化**(轮 6 起):agent 用 ADK 官方 `DatabaseSessionService` 持久化 events + state(含 OCR cache + 附件绑定)到 SQL,开发默认 `sqlite+aiosqlite:///./adk_sessions.db`,线上切 `mysql+asyncmy://...`。进程重启不再失忆,OCR 缓存跨重启复用。附件绑定通过 `_solochat_attachments_<invocation_id>` 状态键,翻译时按 invocation_id 反查。
+
+**为什么不用 Mongo 接 ADK**:ADK 官方 `DatabaseSessionService` 只支持 SQL,Mongo 要自己写 `BaseSessionService` 子类(~200 行)。决策:直接走 MySQL,Mongo 业务数据后续统一迁。
+
+**Runner.run_async 的 invocation_id 是 ADK 自己分配的**(`e-<uuid>`,外部传入会被覆盖)—— sse.py 在流过程中捕获实际 invocation_id,流末追加 state-only event 写绑定。不要尝试在调用前就生成 invocation_id 并相信它。
 
 ### 5. 改密 / 重置密码后所有 session 失效
 
