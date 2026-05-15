@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/response"
@@ -19,7 +18,7 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) ListConversations(c *gin.Context) {
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	list, err := h.svc.ListConversations(c.Request.Context(), uid)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
@@ -35,7 +34,7 @@ func (h *Handler) ListConversations(c *gin.Context) {
 func (h *Handler) CreateConversation(c *gin.Context) {
 	var req CreateConversationReq
 	_ = c.ShouldBindJSON(&req)
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	conv, err := h.svc.CreateConversation(c.Request.Context(), uid, req.Title)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
@@ -50,12 +49,8 @@ func (h *Handler) UpdateConversation(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	id, err := bson.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid id")
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	id := c.Param("id")
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	conv, err := h.svc.UpdateConversation(c.Request.Context(), id, uid, req.Title)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -69,12 +64,8 @@ func (h *Handler) UpdateConversation(c *gin.Context) {
 }
 
 func (h *Handler) DeleteConversation(c *gin.Context) {
-	id, err := bson.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid id")
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	id := c.Param("id")
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	if err := h.svc.DeleteConversation(c.Request.Context(), id, uid); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			response.Fail(c, 404, response.CodeNotFound, "对话不存在")
@@ -87,12 +78,8 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 }
 
 func (h *Handler) ListMessages(c *gin.Context) {
-	id, err := bson.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid id")
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	id := c.Param("id")
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	dtos, err := h.svc.ListMessages(c.Request.Context(), id, uid)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -106,23 +93,14 @@ func (h *Handler) ListMessages(c *gin.Context) {
 }
 
 func (h *Handler) SendMessageStream(c *gin.Context) {
-	id, err := bson.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid id")
-		return
-	}
+	id := c.Param("id")
 	var req SendMessageReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	attachmentIDs, err := parseObjectIDs(req.Attachments)
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid attachment id")
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
-	h.svc.SendMessageStream(c, id, uid, req.Content, attachmentIDs)
+	uid := c.MustGet(middleware.CtxUserID).(string)
+	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments)
 }
 
 func (h *Handler) UploadAttachment(c *gin.Context) {
@@ -136,7 +114,7 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, "missing files")
 		return
 	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	uploaded, err := h.svc.UploadAttachments(c.Request.Context(), uid, files)
 	if err != nil {
 		switch {
@@ -159,12 +137,8 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 }
 
 func (h *Handler) GetAttachment(c *gin.Context) {
-	id, err := bson.ObjectIDFromHex(c.Param("id"))
-	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid id")
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	id := c.Param("id")
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	f, err := h.svc.GetAttachment(c.Request.Context(), id, uid)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -175,19 +149,4 @@ func (h *Handler) GetAttachment(c *gin.Context) {
 		return
 	}
 	c.Redirect(302, h.svc.AttachmentURL(f.OSSKey))
-}
-
-func parseObjectIDs(ss []string) ([]bson.ObjectID, error) {
-	if len(ss) == 0 {
-		return nil, nil
-	}
-	out := make([]bson.ObjectID, len(ss))
-	for i, s := range ss {
-		id, err := bson.ObjectIDFromHex(s)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = id
-	}
-	return out, nil
 }

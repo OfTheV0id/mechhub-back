@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/v2/bson"
+	"github.com/google/uuid"
 
 	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
@@ -45,7 +45,7 @@ var allowedMimeKind = map[string]string{
 	"application/pdf": FileKindDocument,
 }
 
-func (s *Service) UploadAttachments(ctx context.Context, ownerID bson.ObjectID, files []*multipart.FileHeader) ([]UploadedFile, error) {
+func (s *Service) UploadAttachments(ctx context.Context, ownerID string, files []*multipart.FileHeader) ([]UploadedFile, error) {
 	if len(files) > s.cfg.Solochat.MaxAttachmentsPerMessage {
 		return nil, ErrTooManyAttachments
 	}
@@ -73,7 +73,7 @@ func (s *Service) UploadAttachments(ctx context.Context, ownerID bson.ObjectID, 
 			return nil, err
 		}
 		ext := filepath.Ext(fh.Filename)
-		key := "solochat/" + ownerID.Hex() + "/" + suffix + ext
+		key := "solochat/" + ownerID + "/" + suffix + ext
 		if err := s.oss.Upload(ctx, key, src, mime); err != nil {
 			src.Close()
 			return nil, err
@@ -81,7 +81,7 @@ func (s *Service) UploadAttachments(ctx context.Context, ownerID bson.ObjectID, 
 		src.Close()
 
 		f := UploadedFile{
-			ID:           bson.NewObjectID(),
+			ID:           uuid.NewString(),
 			OwnerUserID:  ownerID,
 			OSSKey:       key,
 			OriginalName: fh.Filename,
@@ -98,7 +98,7 @@ func (s *Service) UploadAttachments(ctx context.Context, ownerID bson.ObjectID, 
 	return out, nil
 }
 
-func (s *Service) GetAttachment(ctx context.Context, id, ownerID bson.ObjectID) (*UploadedFile, error) {
+func (s *Service) GetAttachment(ctx context.Context, id, ownerID string) (*UploadedFile, error) {
 	return s.repo.FindFile(ctx, id, ownerID)
 }
 
@@ -108,7 +108,7 @@ func (s *Service) AttachmentURL(key string) string {
 
 func (s *Service) ToAttachmentDTO(f *UploadedFile) AttachmentDTO {
 	return AttachmentDTO{
-		ID:           f.ID.Hex(),
+		ID:           f.ID,
 		Kind:         f.Kind,
 		MimeType:     f.MimeType,
 		OriginalName: f.OriginalName,
@@ -149,14 +149,14 @@ func closeAll(cs []io.Closer) {
 	}
 }
 
-func (s *Service) CreateConversation(ctx context.Context, userID bson.ObjectID, title string) (*Conversation, error) {
+func (s *Service) CreateConversation(ctx context.Context, userID, title string) (*Conversation, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "新对话"
 	}
 	now := time.Now()
 	c := &Conversation{
-		ID:        bson.NewObjectID(),
+		ID:        uuid.NewString(),
 		UserID:    userID,
 		Title:     title,
 		CreatedAt: now,
@@ -168,11 +168,11 @@ func (s *Service) CreateConversation(ctx context.Context, userID bson.ObjectID, 
 	return c, nil
 }
 
-func (s *Service) ListConversations(ctx context.Context, userID bson.ObjectID) ([]Conversation, error) {
+func (s *Service) ListConversations(ctx context.Context, userID string) ([]Conversation, error) {
 	return s.repo.ListConversations(ctx, userID)
 }
 
-func (s *Service) UpdateConversation(ctx context.Context, id, userID bson.ObjectID, title string) (*Conversation, error) {
+func (s *Service) UpdateConversation(ctx context.Context, id, userID, title string) (*Conversation, error) {
 	title = strings.TrimSpace(title)
 	if err := s.repo.UpdateConversationTitle(ctx, id, userID, title); err != nil {
 		return nil, err
@@ -180,18 +180,18 @@ func (s *Service) UpdateConversation(ctx context.Context, id, userID bson.Object
 	return s.repo.FindConversation(ctx, id, userID)
 }
 
-func (s *Service) DeleteConversation(ctx context.Context, id, userID bson.ObjectID) error {
+func (s *Service) DeleteConversation(ctx context.Context, id, userID string) error {
 	return s.repo.DeleteConversation(ctx, id, userID)
 }
 
 // ListMessages 代理 Python /sessions/{id}/messages,拿到翻译好的 DTO 后
 // 把每条 user message 的 attachments(只含 file_id)hydrate 成完整
 // AttachmentDTO(URL / MIME / 文件名 / 大小)。
-func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.ObjectID) ([]MessageDTO, error) {
+func (s *Service) ListMessages(ctx context.Context, conversationID, userID string) ([]MessageDTO, error) {
 	if _, err := s.repo.FindConversation(ctx, conversationID, userID); err != nil {
 		return nil, err
 	}
-	rows, err := s.agent.FetchMessages(ctx, conversationID.Hex())
+	rows, err := s.agent.FetchMessages(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,15 +205,11 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.
 			fileIDSet[a.ID] = struct{}{}
 		}
 	}
-	fileMap := make(map[bson.ObjectID]UploadedFile)
+	fileMap := make(map[string]UploadedFile)
 	if len(fileIDSet) > 0 {
-		ids := make([]bson.ObjectID, 0, len(fileIDSet))
+		ids := make([]string, 0, len(fileIDSet))
 		for fid := range fileIDSet {
-			oid, err := bson.ObjectIDFromHex(fid)
-			if err != nil {
-				continue
-			}
-			ids = append(ids, oid)
+			ids = append(ids, fid)
 		}
 		files, err := s.repo.FindFilesByIDs(ctx, ids, userID)
 		if err != nil {
@@ -240,7 +236,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.
 		}
 		dto := MessageDTO{
 			ID:             r.ID,
-			ConversationID: conversationID.Hex(),
+			ConversationID: conversationID,
 			Role:           r.Role,
 			Parts:          parts,
 			Status:         r.Status,
@@ -248,11 +244,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.
 			CreatedAt:      r.CreatedAt,
 		}
 		for _, a := range r.Attachments {
-			oid, err := bson.ObjectIDFromHex(a.ID)
-			if err != nil {
-				continue
-			}
-			f, ok := fileMap[oid]
+			f, ok := fileMap[a.ID]
 			if !ok {
 				continue
 			}
@@ -266,8 +258,9 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID bson.
 // SendMessageStream 收到前端发消息请求后,Go 端不再 insert/finalize 消息,
 // 只:校验权限 + 下载附件 + 转发到 Python /chat + 把 SSE 帧透给前端。
 // 真正的持久化(events / state / OCR 缓存 / 附件绑定)全在 Python 那边
-// 通过 ADK 的 DatabaseSessionService 完成。
-func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.ObjectID, content string, attachmentIDs []bson.ObjectID) {
+// 通过 ADK 的 DatabaseSessionService 完成。Stage 3 后改为直接调 ADK Go,
+// 不再走 HTTP 到 Python。
+func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string) {
 	ctx := c.Request.Context()
 	w := newSSE(c)
 
@@ -296,8 +289,8 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 	// 立即把用户消息回显给前端,体感更快;真正 ID 由 ADK 持久化后产生,
 	// 前端在 stream 结束后用 GET /messages 拿回 canonical ID。
 	userPending := MessageDTO{
-		ID:             "pending-user-" + bson.NewObjectID().Hex(),
-		ConversationID: conversationID.Hex(),
+		ID:             "pending-user-" + uuid.NewString(),
+		ConversationID: conversationID,
 		Role:           RoleUser,
 		Parts:          []MessagePart{{Type: PartText, Text: content}},
 		Status:         "completed",
@@ -317,11 +310,11 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID bson.
 
 	fileIDs := make([]string, len(files))
 	for i, f := range files {
-		fileIDs[i] = f.ID.Hex()
+		fileIDs[i] = f.ID
 	}
 
 	events, err := s.agent.Chat(ctx, agent.ChatRequest{
-		SessionID: conversationID.Hex(),
+		SessionID: conversationID,
 		Message:   content,
 		Files:     inputs,
 		FileIDs:   fileIDs,

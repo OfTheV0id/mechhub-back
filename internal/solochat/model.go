@@ -3,8 +3,6 @@ package solochat
 import (
 	"encoding/json"
 	"time"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const (
@@ -22,26 +20,30 @@ const (
 )
 
 type Conversation struct {
-	ID        bson.ObjectID `bson:"_id"`
-	UserID    bson.ObjectID `bson:"user_id"`
-	Title     string        `bson:"title"`
-	CreatedAt time.Time     `bson:"created_at"`
-	UpdatedAt time.Time     `bson:"updated_at"`
+	ID        string    `gorm:"primaryKey;type:char(36)"`
+	UserID    string    `gorm:"type:char(36);not null;index:idx_user_updated,priority:1"`
+	Title     string    `gorm:"type:varchar(120)"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null;index:idx_user_updated,priority:2,sort:desc"`
 }
+
+func (Conversation) TableName() string { return "solochat_conversations" }
 
 type UploadedFile struct {
-	ID           bson.ObjectID `bson:"_id"`
-	OwnerUserID  bson.ObjectID `bson:"owner_user_id"`
-	OSSKey       string        `bson:"oss_key"`
-	OriginalName string        `bson:"original_name"`
-	MimeType     string        `bson:"mime_type"`
-	Kind         string        `bson:"kind"`
-	Size         int64         `bson:"size"`
-	CreatedAt    time.Time     `bson:"created_at"`
+	ID           string    `gorm:"primaryKey;type:char(36)"`
+	OwnerUserID  string    `gorm:"type:char(36);not null;index"`
+	OSSKey       string    `gorm:"type:varchar(255)"`
+	OriginalName string    `gorm:"type:varchar(255)"`
+	MimeType     string    `gorm:"type:varchar(64)"`
+	Kind         string    `gorm:"type:varchar(16)"`
+	Size         int64
+	CreatedAt    time.Time `gorm:"not null"`
 }
 
+func (UploadedFile) TableName() string { return "uploaded_files" }
+
 // MessagePart 是前端渲染的最小单位,由 Go 把 Python AgentMessagePart 转一下
-// 复用本结构。落 Mongo 不再需要(消息源全部在 ADK MySQL),只用作 DTO 字段。
+// 复用本结构。不落库(消息源全部在 ADK MySQL),只作 DTO 字段。
 type MessagePart struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -127,7 +129,7 @@ type StreamEvent struct {
 
 func toConversationDTO(c *Conversation) ConversationDTO {
 	return ConversationDTO{
-		ID:        c.ID.Hex(),
+		ID:        c.ID,
 		Title:     c.Title,
 		CreatedAt: c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),

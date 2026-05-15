@@ -2,7 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/v2/mongo"
+	"gorm.io/gorm"
 
 	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
@@ -15,7 +15,7 @@ import (
 	"mechhub-back/internal/user"
 )
 
-func New(cfg *config.Config, db *mongo.Database, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, google *oauth.Google, agentClient *agent.Client) *gin.Engine {
+func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.Sender, oss *storage.OSS, google *oauth.Google, agentClient *agent.Client) *gin.Engine {
 	r := gin.Default()
 
 	if cfg.CORS.Enabled {

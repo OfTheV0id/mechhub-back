@@ -11,28 +11,33 @@ import (
 	"mechhub-back/internal/oauth"
 	"mechhub-back/internal/router"
 	"mechhub-back/internal/session"
+	"mechhub-back/internal/solochat"
 	"mechhub-back/internal/storage"
+	"mechhub-back/internal/user"
 )
 
 func main() {
 	cfg := config.Load()
 
-	ctx := context.Background()
-	mongoDB, err := db.Connect(ctx, cfg.Mongo.URI, cfg.Mongo.DB)
+	gormDB, err := db.Connect(cfg.MySQL.DSN)
 	if err != nil {
-		log.Fatalf("mongo connect: %v", err)
+		log.Fatalf("mysql connect: %v", err)
 	}
-	if err := db.EnsureIndexes(ctx, mongoDB); err != nil {
-		log.Fatalf("ensure indexes: %v", err)
-	}
-	if err := db.MaybeDropLegacyGradingCollections(ctx, mongoDB); err != nil {
-		log.Fatalf("drop legacy grading collections: %v", err)
-	}
-	if err := db.MaybeDropLegacyMessages(ctx, mongoDB); err != nil {
-		log.Fatalf("drop legacy messages collections: %v", err)
+	if err := gormDB.AutoMigrate(
+		&user.User{},
+		&user.Token{},
+		&session.Session{},
+		&solochat.Conversation{},
+		&solochat.UploadedFile{},
+	); err != nil {
+		log.Fatalf("auto migrate: %v", err)
 	}
 
-	sessions := session.NewStore(mongoDB, cfg.Session.TTL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	db.StartTTLCleanup(ctx, gormDB)
+
+	sessions := session.NewStore(gormDB, cfg.Session.TTL)
 	mailer := mail.New(cfg)
 	oss, err := storage.NewOSS(cfg.OSS)
 	if err != nil {
@@ -41,7 +46,7 @@ func main() {
 	google := oauth.NewGoogle(cfg.Google)
 	agentClient := agent.NewClient(cfg.Agent)
 
-	r := router.New(cfg, mongoDB, sessions, mailer, oss, google, agentClient)
+	r := router.New(cfg, gormDB, sessions, mailer, oss, google, agentClient)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

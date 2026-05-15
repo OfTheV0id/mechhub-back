@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/middleware"
@@ -157,7 +156,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	switch err := h.svc.ChangePassword(c.Request.Context(), uid, req.OldPassword, req.NewPassword); {
 	case err == nil:
 		h.setSessionCookie(c, "", -1)
@@ -170,7 +169,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 }
 
 func (h *Handler) Me(c *gin.Context) {
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	u, err := h.svc.Me(c.Request.Context(), uid)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
@@ -181,7 +180,7 @@ func (h *Handler) Me(c *gin.Context) {
 
 func (h *Handler) userResp(u *User) MeResp {
 	return MeResp{
-		ID:        u.ID.Hex(),
+		ID:        u.ID,
 		Email:     u.Email,
 		Name:      u.Name,
 		Role:      u.Role,
@@ -197,7 +196,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	u, err := h.svc.UpdateProfile(c.Request.Context(), uid, req.Name)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
@@ -229,7 +228,7 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	}
 	defer file.Close()
 
-	uid := c.MustGet(middleware.CtxUserID).(bson.ObjectID)
+	uid := c.MustGet(middleware.CtxUserID).(string)
 	url, err := h.svc.UpdateAvatar(c.Request.Context(), uid, file, contentType, ext)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())

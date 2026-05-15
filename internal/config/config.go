@@ -13,7 +13,7 @@ import (
 
 type Config struct {
 	Port     string
-	Mongo    MongoConfig
+	MySQL    MySQLConfig
 	CORS     CORSConfig
 	Session  SessionConfig
 	Mail     MailConfig
@@ -26,9 +26,8 @@ type Config struct {
 	Solochat SolochatConfig
 }
 
-type MongoConfig struct {
-	URI string
-	DB  string
+type MySQLConfig struct {
+	DSN string
 }
 
 type CORSConfig struct {
@@ -95,9 +94,8 @@ func Load() *Config {
 
 	cfg := &Config{
 		Port: getEnv("PORT", "8080"),
-		Mongo: MongoConfig{
-			URI: requireEnv("MONGO_URI"),
-			DB:  requireEnv("MONGO_DB"),
+		MySQL: MySQLConfig{
+			DSN: requireEnv("MYSQL_DSN"),
 		},
 		CORS: CORSConfig{
 			Enabled: getBool("CORS_ENABLED", false),
