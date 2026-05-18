@@ -3,8 +3,7 @@ name: Delete conversation
 description: >-
   Delete a conversation and all its messages.
 
-  Later phases will also cascade-delete grading tasks, annotations,
-  and message-file associations. Files in OSS are best-effort cleaned
+  Message-file associations and OSS objects are cleaned up best-effort
   in a follow-up phase.
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}"
 method: DELETE

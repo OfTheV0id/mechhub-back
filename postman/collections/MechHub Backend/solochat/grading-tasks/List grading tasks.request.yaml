@@ -1,8 +1,0 @@
-$kind: http-request
-name: List grading tasks
-description: List grading tasks for a conversation, newest first.
-url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/grading-tasks"
-method: GET
-headers:
-  Accept: application/json
-order: 4000

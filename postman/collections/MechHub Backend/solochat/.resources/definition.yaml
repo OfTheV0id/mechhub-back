@@ -1,6 +1,9 @@
 $kind: collection
 description: >-
-  Solochat 对话 + 批改模块。需要登录 session_id cookie。
+  Solochat 通用 agent 对话模块。需要登录 session_id cookie。
 
-  消息发送和批改任务创建走 NDJSON 流式响应,批改进度走 SSE。
+
+  发消息走 NDJSON 流式响应,事件类型见 `messages/Send message stream`。
+  批改不再有独立端点 —— 用户上传作业图片后,agent 会自主决定是否调用
+  `grade_submission` 工具,批改结果作为 `tool_result` 事件出现在消息流里。
 order: 3000

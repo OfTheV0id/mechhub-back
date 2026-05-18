@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"mechhub-back/internal/config"
@@ -55,7 +55,7 @@ func (s *Service) Register(ctx context.Context, email, password, name, role stri
 	switch {
 	case errors.Is(err, ErrNotFound):
 		u := &User{
-			ID:           bson.NewObjectID(),
+			ID:           uuid.NewString(),
 			Email:        email,
 			PasswordHash: string(hash),
 			Name:         name,
@@ -93,19 +93,19 @@ func (s *Service) Register(ctx context.Context, email, password, name, role stri
 	}
 }
 
-func (s *Service) UpdateProfile(ctx context.Context, userID bson.ObjectID, name string) (*User, error) {
+func (s *Service) UpdateProfile(ctx context.Context, userID, name string) (*User, error) {
 	if err := s.repo.UpdateName(ctx, userID, strings.TrimSpace(name)); err != nil {
 		return nil, err
 	}
 	return s.repo.FindByID(ctx, userID)
 }
 
-func (s *Service) UpdateAvatar(ctx context.Context, userID bson.ObjectID, body io.Reader, contentType, ext string) (string, error) {
+func (s *Service) UpdateAvatar(ctx context.Context, userID string, body io.Reader, contentType, ext string) (string, error) {
 	suffix, err := randomHex(8)
 	if err != nil {
 		return "", err
 	}
-	key := "avatars/" + userID.Hex() + "/" + suffix + ext
+	key := "avatars/" + userID + "/" + suffix + ext
 	if err := s.oss.Upload(ctx, key, body, contentType); err != nil {
 		return "", err
 	}
@@ -276,7 +276,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	return s.sessions.DeleteByUser(ctx, t.UserID)
 }
 
-func (s *Service) ChangePassword(ctx context.Context, userID bson.ObjectID, oldPwd, newPwd string) error {
+func (s *Service) ChangePassword(ctx context.Context, userID, oldPwd, newPwd string) error {
 	u, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
 		return err
@@ -294,7 +294,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID bson.ObjectID, oldP
 	return s.sessions.DeleteByUser(ctx, userID)
 }
 
-func (s *Service) Me(ctx context.Context, userID bson.ObjectID) (*User, error) {
+func (s *Service) Me(ctx context.Context, userID string) (*User, error) {
 	return s.repo.FindByID(ctx, userID)
 }
 
@@ -324,7 +324,7 @@ func (s *Service) GoogleSignIn(ctx context.Context, code string) (*session.Sessi
 	switch {
 	case errors.Is(err, ErrNotFound):
 		u = &User{
-			ID:        bson.NewObjectID(),
+			ID:        uuid.NewString(),
 			Email:     email,
 			Name:      strings.TrimSpace(info.Name),
 			Role:      UserRoleStudent,
@@ -373,7 +373,7 @@ func (s *Service) mirrorGoogleAvatar(ctx context.Context, u *User, pictureURL st
 	if err != nil {
 		return err
 	}
-	key := "avatars/" + u.ID.Hex() + "/" + suffix + ext
+	key := "avatars/" + u.ID + "/" + suffix + ext
 	if err := s.oss.Upload(ctx, key, blob.Body, blob.ContentType); err != nil {
 		return err
 	}

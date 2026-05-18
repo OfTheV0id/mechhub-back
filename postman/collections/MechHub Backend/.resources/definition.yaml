@@ -39,4 +39,3 @@ variables:
   googleAuthState: ""
   conversationId: ""
   attachmentId: ""
-  taskId: ""

@@ -3,43 +3,70 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
-	"mechhub-back/internal/agent"
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
+	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/oauth"
 	"mechhub-back/internal/router"
 	"mechhub-back/internal/session"
+	"mechhub-back/internal/solochat"
 	"mechhub-back/internal/storage"
+	"mechhub-back/internal/user"
 )
 
 func main() {
 	cfg := config.Load()
 
-	ctx := context.Background()
-	mongoDB, err := db.Connect(ctx, cfg.Mongo.URI, cfg.Mongo.DB)
+	gormDB, err := db.Connect(cfg.MySQL.DSN)
 	if err != nil {
-		log.Fatalf("mongo connect: %v", err)
+		log.Fatalf("mysql connect: %v", err)
 	}
-	if err := db.EnsureIndexes(ctx, mongoDB); err != nil {
-		log.Fatalf("ensure indexes: %v", err)
+	if err := gormDB.AutoMigrate(
+		&user.User{},
+		&user.Token{},
+		&session.Session{},
+		&solochat.Conversation{},
+		&solochat.UploadedFile{},
+	); err != nil {
+		log.Fatalf("auto migrate: %v", err)
 	}
 
-	sessions := session.NewStore(mongoDB, cfg.Session.TTL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	db.StartTTLCleanup(ctx, gormDB)
+
+	sessions := session.NewStore(gormDB, cfg.Session.TTL)
 	mailer := mail.New(cfg)
 	oss, err := storage.NewOSS(cfg.OSS)
 	if err != nil {
 		log.Fatalf("oss init: %v", err)
 	}
 	google := oauth.NewGoogle(cfg.Google)
-	agentClient := agent.NewClient(cfg.Agent)
 
-	r := router.New(cfg, mongoDB, sessions, mailer, oss, google, agentClient)
+	llmSvc, err := llm.Bootstrap(ctx, llm.Config{
+		MySQLDSN:     cfg.MySQL.DSN,
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
+		GeminiModel:  envDefault("GEMINI_MODEL", "gemini-2.5-flash"),
+	})
+	if err != nil {
+		log.Fatalf("llm bootstrap: %v", err)
+	}
+
+	r := router.New(cfg, gormDB, sessions, mailer, oss, google, llmSvc)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+func envDefault(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }

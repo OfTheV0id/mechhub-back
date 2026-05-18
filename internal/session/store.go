@@ -7,22 +7,21 @@ import (
 	"errors"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
+	"gorm.io/gorm"
 )
 
 var ErrNotFound = errors.New("session not found")
 
 type Store struct {
-	col *mongo.Collection
+	db  *gorm.DB
 	ttl time.Duration
 }
 
-func NewStore(db *mongo.Database, ttl time.Duration) *Store {
-	return &Store{col: db.Collection("sessions"), ttl: ttl}
+func NewStore(db *gorm.DB, ttl time.Duration) *Store {
+	return &Store{db: db, ttl: ttl}
 }
 
-func (s *Store) New(ctx context.Context, userID bson.ObjectID) (*Session, error) {
+func (s *Store) New(ctx context.Context, userID string) (*Session, error) {
 	id, err := randomID()
 	if err != nil {
 		return nil, err
@@ -34,7 +33,7 @@ func (s *Store) New(ctx context.Context, userID bson.ObjectID) (*Session, error)
 		ExpiresAt: now.Add(s.ttl),
 		CreatedAt: now,
 	}
-	if _, err := s.col.InsertOne(ctx, sess); err != nil {
+	if err := s.db.WithContext(ctx).Create(sess).Error; err != nil {
 		return nil, err
 	}
 	return sess, nil
@@ -42,8 +41,8 @@ func (s *Store) New(ctx context.Context, userID bson.ObjectID) (*Session, error)
 
 func (s *Store) Get(ctx context.Context, id string) (*Session, error) {
 	var sess Session
-	err := s.col.FindOne(ctx, bson.M{"_id": id}).Decode(&sess)
-	if errors.Is(err, mongo.ErrNoDocuments) {
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&sess).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -56,13 +55,11 @@ func (s *Store) Get(ctx context.Context, id string) (*Session, error) {
 }
 
 func (s *Store) Delete(ctx context.Context, id string) error {
-	_, err := s.col.DeleteOne(ctx, bson.M{"_id": id})
-	return err
+	return s.db.WithContext(ctx).Where("id = ?", id).Delete(&Session{}).Error
 }
 
-func (s *Store) DeleteByUser(ctx context.Context, userID bson.ObjectID) error {
-	_, err := s.col.DeleteMany(ctx, bson.M{"user_id": userID})
-	return err
+func (s *Store) DeleteByUser(ctx context.Context, userID string) error {
+	return s.db.WithContext(ctx).Where("user_id = ?", userID).Delete(&Session{}).Error
 }
 
 func randomID() (string, error) {

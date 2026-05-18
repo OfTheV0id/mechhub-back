@@ -1,21 +1,17 @@
 package user
 
-import (
-	"time"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
+import "time"
 
 type User struct {
-	ID           bson.ObjectID `bson:"_id"`
-	Email        string        `bson:"email"`
-	PasswordHash string        `bson:"password_hash"`
-	Name         string        `bson:"name"`
-	Role         string        `bson:"role"`
-	AvatarKey    string        `bson:"avatar_key"`
-	GoogleSub    string        `bson:"google_sub"`
-	Verified     bool          `bson:"verified"`
-	CreatedAt    time.Time     `bson:"created_at"`
+	ID           string    `gorm:"primaryKey;type:char(36)"`
+	Email        string    `gorm:"uniqueIndex;type:varchar(255);not null"`
+	PasswordHash string    `gorm:"type:varchar(72)"`
+	Name         string    `gorm:"type:varchar(50)"`
+	Role         string    `gorm:"type:varchar(16);index"`
+	AvatarKey    string    `gorm:"type:varchar(255)"`
+	GoogleSub    string    `gorm:"type:varchar(64);index"`
+	Verified     bool      `gorm:"not null;default:false"`
+	CreatedAt    time.Time `gorm:"not null"`
 }
 
 const (
@@ -28,10 +24,10 @@ const (
 )
 
 type Token struct {
-	ID        string        `bson:"_id"`
-	UserID    bson.ObjectID `bson:"user_id"`
-	Kind      string        `bson:"kind"`
-	ExpiresAt time.Time     `bson:"expires_at"`
+	ID        string    `gorm:"primaryKey;type:varchar(64)"`
+	UserID    string    `gorm:"type:char(36);not null;index:idx_user_kind,priority:1"`
+	Kind      string    `gorm:"type:varchar(32);not null;index:idx_user_kind,priority:2"`
+	ExpiresAt time.Time `gorm:"not null;index"`
 }
 
 type RegisterReq struct {

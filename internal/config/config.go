@@ -13,7 +13,7 @@ import (
 
 type Config struct {
 	Port     string
-	Mongo    MongoConfig
+	MySQL    MySQLConfig
 	CORS     CORSConfig
 	Session  SessionConfig
 	Mail     MailConfig
@@ -22,13 +22,11 @@ type Config struct {
 	OSS      OSSConfig
 	Avatar   AvatarConfig
 	Google   GoogleConfig
-	Agent    AgentConfig
 	Solochat SolochatConfig
 }
 
-type MongoConfig struct {
-	URI string
-	DB  string
+type MySQLConfig struct {
+	DSN string
 }
 
 type CORSConfig struct {
@@ -80,15 +78,9 @@ type GoogleConfig struct {
 	DefaultReturnURL string
 }
 
-type AgentConfig struct {
-	BaseURL string
-	Timeout time.Duration
-}
-
 type SolochatConfig struct {
 	MaxAttachmentsPerMessage int
 	MaxFileSize              int64
-	HistoryReplayLimit       int
 }
 
 func Load() *Config {
@@ -96,9 +88,8 @@ func Load() *Config {
 
 	cfg := &Config{
 		Port: getEnv("PORT", "8080"),
-		Mongo: MongoConfig{
-			URI: requireEnv("MONGO_URI"),
-			DB:  requireEnv("MONGO_DB"),
+		MySQL: MySQLConfig{
+			DSN: requireEnv("MYSQL_DSN"),
 		},
 		CORS: CORSConfig{
 			Enabled: getBool("CORS_ENABLED", false),
@@ -141,14 +132,9 @@ func Load() *Config {
 			RedirectURL:      requireEnv("GOOGLE_REDIRECT_URL"),
 			DefaultReturnURL: requireEnv("GOOGLE_DEFAULT_RETURN_URL"),
 		},
-		Agent: AgentConfig{
-			BaseURL: requireEnv("AGENT_BASE_URL"),
-			Timeout: time.Duration(getInt("AGENT_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
-		},
 		Solochat: SolochatConfig{
 			MaxAttachmentsPerMessage: getInt("SOLOCHAT_MAX_ATTACHMENTS_PER_MESSAGE", 4),
 			MaxFileSize:              int64(getInt("SOLOCHAT_MAX_FILE_SIZE_BYTES", 20*1024*1024)),
-			HistoryReplayLimit:       getInt("SOLOCHAT_HISTORY_REPLAY_LIMIT", 20),
 		},
 	}
 	return cfg

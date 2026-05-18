@@ -1,6 +1,14 @@
 $kind: http-request
 name: List messages
-description: List all messages of a conversation, oldest first.
+description: |
+  List all messages of a conversation, oldest first.
+
+  自轮 7 起,本端点由 Go 直接查 ADK Go 的 sessions/events 表(MySQL)
+  翻译成 MessageDTO[]。`internal/llm/sessions.go::ListMessages` 按
+  invocation_id 把 events 分组成 user / assistant 两条消息,parts 分
+  type:text / thinking / tool_use / tool_result。Go 端按 user message
+  的 file_ids 查 MySQL `uploaded_files` 把附件元信息(URL / MIME /
+  文件名 / 大小)hydrate 上去。`Message.id` 是 ADK event UUID(36 字符)。
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages"
 method: GET
 headers:
