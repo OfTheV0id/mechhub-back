@@ -29,7 +29,7 @@ mechhub-back/
     ├── mail/                     # 邮件发送
     ├── middleware/               # cors / auth
     ├── session/                  # cookie session(user_sessions 表)
-    ├── storage/                  # OSS 客户端封装(Upload / Download / PublicURL)
+    ├── storage/                  # OSS 客户端封装(Upload / Download / Delete) — bucket 私有,无公共 URL
     ├── oauth/                    # Google OAuth 客户端
     ├── llm/                      # ADK Go 封装(Gemini + tools + SSE 翻译)
     │   ├── runner.go             # Bootstrap:agent + runner + session DB service

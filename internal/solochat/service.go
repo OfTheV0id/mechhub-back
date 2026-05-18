@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -137,8 +138,22 @@ func (s *Service) GetAttachment(ctx context.Context, id, ownerID string) (*Uploa
 	return s.repo.FindFile(ctx, id, ownerID)
 }
 
-func (s *Service) AttachmentURL(key string) string {
-	return s.oss.PublicURL(key)
+// OpenAttachment 鉴权后打开附件字节流。调用方拿到 ReadCloser 后必须 Close。
+func (s *Service) OpenAttachment(ctx context.Context, id, ownerID string) (*UploadedFile, io.ReadCloser, error) {
+	f, err := s.repo.FindFile(ctx, id, ownerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err := s.oss.Download(ctx, f.OSSKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, body, nil
+}
+
+// AttachmentURL 拼出后端 stream-through URL。
+func (s *Service) AttachmentURL(fileID string) string {
+	return s.cfg.App.BackendBaseURL + "/api/solochat/attachments/" + fileID
 }
 
 func (s *Service) ToAttachmentDTO(f *UploadedFile) AttachmentDTO {
@@ -148,7 +163,7 @@ func (s *Service) ToAttachmentDTO(f *UploadedFile) AttachmentDTO {
 		MimeType:     f.MimeType,
 		OriginalName: f.OriginalName,
 		Size:         f.Size,
-		URL:          s.oss.PublicURL(f.OSSKey),
+		URL:          s.AttachmentURL(f.ID),
 	}
 }
 

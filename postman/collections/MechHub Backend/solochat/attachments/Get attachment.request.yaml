@@ -1,8 +1,14 @@
 $kind: http-request
 name: Get attachment
 description: >-
-  302 redirects to the public OSS URL for this attachment. Only the
-  owner can fetch; other users get 404.
+  Stream-through 下载。需要 cookie 鉴权,且必须是 owner_user_id;
+  其他用户访问返回 404。响应是文件字节流,Content-Type 按附件原始
+  MIME(`image/*` / `application/pdf` / `text/*`)。Content-Disposition
+  `inline` 让浏览器内联预览。
+
+
+  OSS bucket 是**私有**的(默认权限),所有访问都过后端;附件 URL
+  无法分享给未登录用户。
 url: "{{baseUrl}}/api/solochat/attachments/{{attachmentId}}"
 method: GET
 headers:

@@ -39,3 +39,4 @@ variables:
   googleAuthState: ""
   conversationId: ""
   attachmentId: ""
+  userId: ""

@@ -1,0 +1,19 @@
+$kind: http-request
+name: Get avatar
+description: >-
+  Stream-through 拉指定用户的头像字节流。**公共端点,不需要登录** —— 任何
+  知道 user_id 的人都能看头像(类似 GitHub 的 `avatars.githubusercontent.com`)。
+
+
+  响应:`Content-Type: image/<png|jpeg|webp>`,响应体是图片字节流。前端用
+  `<img src="{{baseUrl}}/api/user/avatar/{{userId}}?v={cache_bust}">` 直接展示。
+  后端忽略 `?v=` 参数,只用于浏览器缓存破坏(头像换了 key 变,v 跟着变,
+  浏览器拿到新 URL 重新拉)。
+
+
+  没设头像 / user_id 不存在 → 404。
+url: "{{baseUrl}}/api/user/avatar/{{userId}}"
+method: GET
+headers:
+  Accept: image/*
+order: 1500

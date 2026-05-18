@@ -51,7 +51,8 @@ type MailConfig struct {
 }
 
 type AppConfig struct {
-	BaseURL string
+	BaseURL        string // 前端 base URL,用于邮件里的链接
+	BackendBaseURL string // 后端自身的外部 URL,用于拼 avatar / attachment 的 stream-through URL
 }
 
 type TokenConfig struct {
@@ -65,7 +66,6 @@ type OSSConfig struct {
 	Bucket          string
 	AccessKeyID     string
 	AccessKeySecret string
-	PublicBaseURL   string
 }
 
 type AvatarConfig struct {
@@ -117,7 +117,8 @@ func Load() *Config {
 			BgURL:        getEnv("MAIL_BG_URL", ""),
 		},
 		App: AppConfig{
-			BaseURL: requireEnv("APP_BASE_URL"),
+			BaseURL:        requireEnv("APP_BASE_URL"),
+			BackendBaseURL: requireEnv("BACKEND_BASE_URL"),
 		},
 		Token: TokenConfig{
 			VerifyTTL:          time.Duration(getInt("VERIFY_TOKEN_TTL_HOURS", 24)) * time.Hour,
@@ -129,7 +130,6 @@ func Load() *Config {
 			Bucket:          requireEnv("OSS_BUCKET"),
 			AccessKeyID:     requireEnv("OSS_ACCESS_KEY_ID"),
 			AccessKeySecret: requireEnv("OSS_ACCESS_KEY_SECRET"),
-			PublicBaseURL:   requireEnv("OSS_PUBLIC_BASE_URL"),
 		},
 		Avatar: AvatarConfig{
 			MaxBytes: int64(getInt("AVATAR_MAX_BYTES", 2*1024*1024)),

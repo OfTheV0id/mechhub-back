@@ -13,6 +13,9 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 	g.GET("/auth/google", h.GoogleStart)
 	g.GET("/auth/google/callback", h.GoogleCallback)
 
+	// 公共端点(无需登录):任何人可按 user_id 拿头像 stream
+	g.GET("/user/avatar/:userID", h.GetAvatar)
+
 	authed := g.Group("", auth)
 	authed.GET("/user/me", h.Me)
 	authed.POST("/user/update-profile", h.UpdateProfile)

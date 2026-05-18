@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 
@@ -13,8 +12,7 @@ import (
 )
 
 type OSS struct {
-	bucket     *oss.Bucket
-	publicBase string
+	bucket *oss.Bucket
 }
 
 func NewOSS(cfg config.OSSConfig) (*OSS, error) {
@@ -27,10 +25,7 @@ func NewOSS(cfg config.OSSConfig) (*OSS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &OSS{
-		bucket:     bucket,
-		publicBase: strings.TrimRight(cfg.PublicBaseURL, "/"),
-	}, nil
+	return &OSS{bucket: bucket}, nil
 }
 
 func (o *OSS) Upload(ctx context.Context, key string, body io.Reader, contentType string) error {
@@ -42,13 +37,6 @@ func (o *OSS) Delete(ctx context.Context, key string) error {
 		return errors.New("empty key")
 	}
 	return o.bucket.DeleteObject(key)
-}
-
-func (o *OSS) PublicURL(key string) string {
-	if key == "" {
-		return ""
-	}
-	return o.publicBase + "/" + key
 }
 
 func (o *OSS) Download(ctx context.Context, key string) (io.ReadCloser, error) {

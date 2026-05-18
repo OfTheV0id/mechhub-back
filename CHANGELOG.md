@@ -9,6 +9,73 @@
 
 ---
 
+## Claude 轮 8 — 2026-05-16 — OSS 私有化 + 全 stream-through
+
+### ⚠️ 破坏性变更
+
+1. **OSS bucket 切到全新 `mechhub-oss`(私有)**
+   - 旧 `mechhub-avatar`(公共读 + 自定义域名 + Let's Encrypt 证书)废弃
+   - 新 bucket 默认私有,**任何直接 URL 都 403**;不需要绑域名 / 上证书
+   - 旧 OSS 数据不迁移(无生产用户)
+
+2. **`OSS_PUBLIC_BASE_URL` env 删除**
+   - 不再需要,bucket 没有公共 URL
+   - 旧 bucket 的自定义子域(`avatar.oftheloneliness.cn`)+ 上传的 wildcard 证书都不再用
+
+3. **新增 env `BACKEND_BASE_URL`**(必填)
+   - 后端自身对外 URL,用于拼 `avatar_url` / `attachment.url` 等 stream-through URL
+   - 开发期 `http://localhost:8080`,生产同前端域名(同域 path-routing 模式)
+
+4. **`avatar_url` 形态变了**:
+   - **旧** 阿里云公共 URL `https://avatar.oftheloneliness.cn/avatars/<uid>/<hex>.jpg`
+   - **新** 后端 stream-through URL `${BACKEND_BASE_URL}/api/user/avatar/<user_id>?v=<key-suffix>`
+   - 前端 `<img src={user.avatar_url}>` 用法不变,**URL 字符串值变了**
+
+5. **附件 `URL` 字段形态变了**(`AttachmentDTO.url`):
+   - **旧** OSS 公共 URL
+   - **新** stream-through URL `${BACKEND_BASE_URL}/api/solochat/attachments/<id>`
+
+6. **`GET /api/solochat/attachments/:id` 行为变化**:
+   - **旧** 302 重定向到 OSS 公共 URL
+   - **新** 直接返回字节流(`Content-Type` 按附件 MIME,`Content-Disposition: inline`)
+   - 鉴权语义加强:owner_user_id 之外的用户拿到 URL 也下不到(以前能直链 OSS,现在必须过 Go)
+
+### 功能新增
+
+7. **`GET /api/user/avatar/:userID` 新公共端点**
+   - 无需登录,任何人按 user_id 拉头像 stream(类似 GitHub avatars)
+   - `Cache-Control: public, max-age=86400` 让 CDN / 浏览器缓存
+   - `?v=<key-suffix>` query 参数前端用于缓存破坏(用户换头像后 key 变,v 变,浏览器自动重拉)
+   - 没设头像 / userID 不存在 → 404
+
+8. **`GET /api/solochat/attachments/:id` 改 stream-through**
+   - 后端用 OSS AK 下载 → `c.DataFromReader` 边读边写浏览器
+   - 内存占用恒定(16KB buffer),不全缓存
+
+### 配置 / 代码变化
+
+9. **`internal/storage/oss.go`** 删 `PublicURL` 方法 + `publicBase` 字段
+10. **`internal/user/service.go`** 加 `OpenAvatar` / `AvatarURL(userID, key)` / `cacheBust` / `mimeFromKey`
+11. **`internal/solochat/service.go`** 加 `OpenAttachment` / `AttachmentURL(fileID)`
+12. **`internal/config/config.go`** 删 `OSSConfig.PublicBaseURL`,`AppConfig` 加 `BackendBaseURL`
+13. **Postman** `Get attachment` 描述改 stream-through;新增 `Get avatar.request.yaml`;集合变量加 `userId`
+
+### 部署影响
+
+- **生产 `.env`** 必须加 `BACKEND_BASE_URL=https://mechhub.oftheloneliness.cn`(同前端域名)
+- **`docker-compose.yml`** 父目录无需改(BACKEND_BASE_URL 从 `mechhub-back/.env` 透传)
+- 阿里云控制台:
+  - 新建 `mechhub-oss` bucket,**权限选私有**(默认)
+  - **不需要**绑域名,**不需要**上证书,**不需要**开公共读
+  - 旧 `mechhub-avatar` 可以删(或留着归档)
+
+### 给前端的 TODO
+
+- [ ] `<img src={user.avatar_url}>` 行为不变;但**如果跨域**(dev 前端 5173 / 后端 8080)、且未来要给附件加 `<img crossorigin="use-credentials">`,确认 CORS 已放行
+- [ ] 上传头像后,API 返回的新 `avatar_url` 带 `?v=` 跟旧 URL 不同,React state 自然刷新 ✓
+
+---
+
 ## Claude 轮 7.1 — 2026-05-15 — 加 Stop API
 
 ### 功能

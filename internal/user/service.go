@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -100,6 +101,8 @@ func (s *Service) UpdateProfile(ctx context.Context, userID, name string) (*User
 	return s.repo.FindByID(ctx, userID)
 }
 
+// UpdateAvatar 上传新头像到 OSS,原子交换 DB 里的 key,best-effort 删旧文件,
+// 返回新 stream-through URL。
 func (s *Service) UpdateAvatar(ctx context.Context, userID string, body io.Reader, contentType, ext string) (string, error) {
 	suffix, err := randomHex(8)
 	if err != nil {
@@ -117,11 +120,58 @@ func (s *Service) UpdateAvatar(ctx context.Context, userID string, body io.Reade
 	if oldKey != "" && oldKey != key {
 		_ = s.oss.Delete(ctx, oldKey)
 	}
-	return s.oss.PublicURL(key), nil
+	return s.AvatarURL(userID, key), nil
 }
 
-func (s *Service) AvatarURL(key string) string {
-	return s.oss.PublicURL(key)
+// AvatarURL 拼出后端 stream-through URL。key 为空(用户没设头像)返回空字符串。
+// `?v=<key-suffix>` 让浏览器在用户换头像后自动失效缓存(key 变,URL 变)。
+func (s *Service) AvatarURL(userID, key string) string {
+	if key == "" {
+		return ""
+	}
+	return s.cfg.App.BackendBaseURL + "/api/user/avatar/" + userID + "?v=" + cacheBust(key)
+}
+
+func cacheBust(avatarKey string) string {
+	// avatarKey = "avatars/<uid>/<hex>.<ext>",取 "<hex>" 段做版本号
+	slash := strings.LastIndex(avatarKey, "/")
+	rest := avatarKey
+	if slash >= 0 {
+		rest = avatarKey[slash+1:]
+	}
+	if dot := strings.LastIndex(rest, "."); dot > 0 {
+		rest = rest[:dot]
+	}
+	return rest
+}
+
+// OpenAvatar 打开当前用户的头像字节流。如果用户不存在或没设头像,返回 ErrNotFound。
+func (s *Service) OpenAvatar(ctx context.Context, userID string) (io.ReadCloser, string, error) {
+	u, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if u.AvatarKey == "" {
+		return nil, "", ErrNotFound
+	}
+	body, err := s.oss.Download(ctx, u.AvatarKey)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, mimeFromKey(u.AvatarKey), nil
+}
+
+func mimeFromKey(key string) string {
+	switch strings.ToLower(filepath.Ext(key)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func randomHex(n int) (string, error) {

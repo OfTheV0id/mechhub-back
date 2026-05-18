@@ -150,7 +150,7 @@ func (h *Handler) UploadAttachment(c *gin.Context) {
 func (h *Handler) GetAttachment(c *gin.Context) {
 	id := c.Param("id")
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	f, err := h.svc.GetAttachment(c.Request.Context(), id, uid)
+	f, body, err := h.svc.OpenAttachment(c.Request.Context(), id, uid)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			response.Fail(c, 404, response.CodeNotFound, "附件不存在")
@@ -159,5 +159,9 @@ func (h *Handler) GetAttachment(c *gin.Context) {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
 	}
-	c.Redirect(302, h.svc.AttachmentURL(f.OSSKey))
+	defer body.Close()
+	c.Header("Cache-Control", "private, max-age=86400")
+	c.DataFromReader(200, f.Size, f.MimeType, body, map[string]string{
+		"Content-Disposition": `inline; filename="` + f.OriginalName + `"`,
+	})
 }

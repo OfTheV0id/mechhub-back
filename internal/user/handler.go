@@ -184,7 +184,7 @@ func (h *Handler) userResp(u *User) MeResp {
 		Email:     u.Email,
 		Name:      u.Name,
 		Role:      u.Role,
-		AvatarURL: h.svc.AvatarURL(u.AvatarKey),
+		AvatarURL: h.svc.AvatarURL(u.ID, u.AvatarKey),
 		Verified:  u.Verified,
 		CreatedAt: u.CreatedAt.Format(time.RFC3339),
 	}
@@ -235,6 +235,24 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 		return
 	}
 	response.OK(c, UploadAvatarResp{AvatarURL: url})
+}
+
+// GetAvatar 公共端点(不要求 cookie),按 user_id stream-through 头像。
+// `?v=<hex>` query 参数前端用于缓存破坏,后端不读。
+func (h *Handler) GetAvatar(c *gin.Context) {
+	userID := c.Param("userID")
+	body, mime, err := h.svc.OpenAvatar(c.Request.Context(), userID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.Status(404)
+			return
+		}
+		response.Fail(c, 500, response.CodeInternal, err.Error())
+		return
+	}
+	defer body.Close()
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.DataFromReader(200, -1, mime, body, nil)
 }
 
 func (h *Handler) GoogleStart(c *gin.Context) {

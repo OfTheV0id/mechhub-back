@@ -33,6 +33,7 @@ POST /api/auth/forgot-password    发重置邮件
 POST /api/auth/reset-password     用 token 设新密码,踢掉所有 session
 GET  /api/auth/google             302 跳 Google 授权页(state 写入 short cookie)
 GET  /api/auth/google/callback    Google 回调,换 token、拉用户、首登镜像头像到 OSS、set session cookie、302 回 GOOGLE_DEFAULT_RETURN_URL
+GET  /api/user/avatar/:userID     **公共**(无需登录),stream-through 拉指定用户头像;`?v=` 缓存破坏
 GET  /api/user/me                 (需登录) 返回 id/email/name/role/avatar_url/verified/created_at
 POST /api/user/update-profile     (需登录) 改 name,返回最新 userdata
 POST /api/user/avatar             (需登录) multipart 上传头像 → 阿里云 OSS → 返回新 URL
@@ -189,7 +190,7 @@ Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `
 
 ### 6. 头像存 `avatar_key` 不存 URL
 
-DB 里只存对象 key(`users.avatar_key`,如 `avatars/<uid>/<rand>.png`),返回给前端时由 `oss.PublicURL(key)` 拼 URL。**改 CDN 域名只改 `.env` 不动数据**。
+DB 里只存对象 key(`users.avatar_key`,如 `avatars/<uid>/<rand>.png`)。**OSS bucket 私有,无公共 URL**——`avatar_url` 由后端拼 `{BACKEND_BASE_URL}/api/user/avatar/<user_id>?v=<key-suffix>`,浏览器拉这个端点,Go 后端做 stream-through 从 OSS 取字节流转发(`internal/user/service.go::OpenAvatar`)。`?v=` 让 key 变化时 URL 跟着变,浏览器缓存自动失效。
 
 ### 7. SwapAvatarKey 是原子的
 
@@ -203,9 +204,15 @@ DB 里只存对象 key(`users.avatar_key`,如 `avatars/<uid>/<rand>.png`),返回
 
 用户之前以为"每次注册收到的 token 都一样" —— 实际是 Gmail 把同主题邮件折叠成 thread,默认显示最早一封。**后端确实每次生成不同 token**,这点已验证。如果用户再提这个问题,引导他看 Resend 控制台 Logs 或换非 Gmail 邮箱测试。
 
-### 10. `OSS_PUBLIC_BASE_URL` 必须带 `https://`
+### 10. OSS bucket 私有 + stream-through(头像与附件统一)
 
-`oss.go` 里直接拼接 `publicBase + "/" + key`,如果没带协议头会得到无效 URL。`.env.example` 有正确示例。
+OSS bucket(`mechhub-oss`)**私有**,任何直接 URL 都 403。所有访问都过后端:
+
+- **头像** `GET /api/user/avatar/:userID`:**公共端点**(无 cookie 要求,像 GitHub avatar)。后端按 user_id 查 `avatar_key` → `s.oss.Download(key)` → `c.DataFromReader(...)` 流回。响应 `Content-Type: image/*` + `Cache-Control: public, max-age=86400`。`avatar_url` 带 `?v=<key-suffix>` 做缓存破坏
+- **附件** `GET /api/solochat/attachments/:id`:**需登录**。校验 owner_user_id → `OpenAttachment` 返回 `(*UploadedFile, io.ReadCloser)` → stream-through,响应 `Content-Disposition: inline`
+- 浏览器**永远不直连 OSS**,所以不需要给 bucket 绑自定义域名 / 上证书 / 开公共读
+
+`BACKEND_BASE_URL` env 是后端自身的对外 URL,用来拼 `avatar_url` / `attachment.url`(`internal/user/service.go::AvatarURL`、`internal/solochat/service.go::AttachmentURL`)。同域部署填前端域名,开发期 `http://localhost:8080`。
 
 ## 部署计划(用户已经决定的)
 
@@ -233,6 +240,7 @@ CORS_ENABLED=false                ← 同域不需要 CORS
 SESSION_COOKIE_SECURE=true        ← HTTPS 必开
 SESSION_COOKIE_SAMESITE=lax       ← 同域,lax 够用
 APP_BASE_URL=https://mechhub.oftheloneliness.cn
+BACKEND_BASE_URL=https://mechhub.oftheloneliness.cn   ← 同域,跟 APP_BASE_URL 同一个
 GOOGLE_REDIRECT_URL=https://mechhub.oftheloneliness.cn/api/auth/google/callback
 GOOGLE_DEFAULT_RETURN_URL=https://mechhub.oftheloneliness.cn
 GEMINI_API_KEY=<生产 key>
