@@ -25,25 +25,31 @@ mechhub-back/
 ├── .env / .env.example
 └── internal/
     ├── config/                   # typed Config,启动时校验必填
-    ├── db/                       # mongo client + 索引初始化
+    ├── db/                       # gorm MySQL client + AutoMigrate + 后台 TTL cleanup
     ├── mail/                     # 邮件发送
     ├── middleware/               # cors / auth
-    ├── session/                  # session 存储 (mongo)
+    ├── session/                  # cookie session(user_sessions 表)
     ├── storage/                  # OSS 客户端封装(Upload / Download / PublicURL)
     ├── oauth/                    # Google OAuth 客户端
-    ├── agent/                    # Python ADK HTTP 客户端(POST /chat,SSE 解析)
+    ├── llm/                      # ADK Go 封装(Gemini + tools + SSE 翻译)
+    │   ├── runner.go             # Bootstrap:agent + runner + session DB service
+    │   ├── sse.go                # StreamChat:event 流转 SSE 帧
+    │   ├── sessions.go           # ListMessages:读 ADK session events 翻译成 MessageDTO
+    │   ├── prompts/              # 系统提示词 + grading 提示词
+    │   ├── schemas/              # GradingOutput Go struct + genai.Schema
+    │   └── tools/                # ocr.go (Document AI) + grader.go (Gemini structured output)
     ├── response/                 # 统一响应 + 错误码常量
     ├── router/                   # 装配路由,不写具体路径
     └── <feature>/                # 功能模块,自带 route.go
         ├── route.go              # Mount(g, h, ...) 一眼可见全部路由
         ├── handler.go            # 参数解析 + 调 service + 返回
         ├── service.go            # 业务逻辑
-        ├── repo.go               # 数据访问
+        ├── repo.go               # 数据访问 (GORM)
         ├── model.go              # struct + DTO
         └── *.go                  # 其它本模块文件
 ```
 
-当前 feature module:`user/`、`solochat/`(后者还多了 `grading.go` + `events_hub.go` + `streamer.go`,因为流式 + 异步任务编排)。
+当前 feature module:`user/`、`solochat/`(后者还有 `streamer.go` 处理 SSE 写出)。
 
 新增功能模块 = 复制这套五件套 + `router.go` 加一行 mount。
 
@@ -64,8 +70,8 @@ mechhub-back/
    - 三段相似代码不抽函数,五段以上再考虑。
 
 4. **依赖注入,无全局变量**
-   - mongo client、配置、mail sender 在 `main.go` 初始化,`New(...)` 注入到各模块。
-   - 禁止 `var DB *mongo.Client` 这种 package-level 全局。
+   - `*gorm.DB`、配置、mail sender、`*llm.Service` 在 `main.go` 初始化,`New(...)` 注入到各模块。
+   - 禁止 `var DB *gorm.DB` 这种 package-level 全局。
 
 5. **路由可见性**
    - 每个模块自带 `route.go`,所有路径 + handler 一眼可见。
@@ -108,15 +114,14 @@ mechhub-back/
 
 ## 数据库
 
-- 启动时 `EnsureIndexes`:
-  - `users.email` unique
-  - `sessions.expires_at` TTL=0
-  - `tokens.expires_at` TTL=0,`tokens.user_id+kind` 复合索引
-  - `solochat_conversations.user_id+updated_at`
-  - `uploaded_files.owner_user_id`
-- 用 `bson.ObjectID`,不用 string ID。
-- 集合命名:**用户系统** `users` / `sessions` / `tokens`;**Solochat** 加 `solochat_` 前缀(`solochat_conversations` 等);**通用** `uploaded_files`(头像 + solochat 附件共用)。
-- 加新模块时新建的集合应该加同样的模块名前缀,便于看名字就知道归属。
+- MySQL via GORM,启动时 `gormDB.AutoMigrate(...)` 自动建表 + 索引(gorm tag 上声明)
+- TTL 清理:不依赖数据库自带 TTL(MySQL 没有),用 `internal/db.StartTTLCleanup` 后台 goroutine 每 60s `DELETE WHERE expires_at < NOW()` 清 `tokens` + `user_sessions`
+- 主键:**UUID v4 字符串(char(36))**。**不要**继续用 `bson.ObjectID`,Mongo 已退场
+- 表命名:
+  - **用户系统**:`users` / `tokens` / `user_sessions`(注意 cookie session 表叫 `user_sessions`,避开 ADK Go 在同库自动建的 `sessions`)
+  - **Solochat**:加 `solochat_` 前缀(目前只有 `solochat_conversations`,消息源走 ADK)
+  - **通用**:`uploaded_files`(头像 + solochat 附件共用)
+- 加新模块时新建的表应该加同样的模块名前缀,便于看名字就知道归属
 
 ### 消息源:ADK Go 的 sessions/events 表(轮 7 起)
 

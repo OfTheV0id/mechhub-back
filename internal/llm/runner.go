@@ -25,9 +25,10 @@ const AppName = "mechhub_tutor"
 
 // Bootstrap 配置:从 .env 读到的 LLM 相关参数。
 type Config struct {
-	MySQLDSN     string
-	GeminiAPIKey string
-	GeminiModel  string
+	MySQLDSN      string
+	GeminiAPIKey  string
+	GeminiBaseURL string
+	GeminiModel   string
 }
 
 // Service 把 ADK Go 的 runner + sessionService 打包成业务可注入的依赖。
@@ -37,10 +38,14 @@ type Service struct {
 }
 
 func Bootstrap(ctx context.Context, cfg Config) (*Service, error) {
-	model, err := gemini.NewModel(ctx, cfg.GeminiModel, &genai.ClientConfig{
+	clientCfg := &genai.ClientConfig{
 		APIKey:  cfg.GeminiAPIKey,
 		Backend: genai.BackendGeminiAPI,
-	})
+	}
+	if cfg.GeminiBaseURL != "" {
+		clientCfg.HTTPOptions.BaseURL = cfg.GeminiBaseURL
+	}
+	model, err := gemini.NewModel(ctx, cfg.GeminiModel, clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("gemini.NewModel: %w", err)
 	}

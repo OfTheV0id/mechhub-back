@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
@@ -47,9 +46,10 @@ func main() {
 	google := oauth.NewGoogle(cfg.Google)
 
 	llmSvc, err := llm.Bootstrap(ctx, llm.Config{
-		MySQLDSN:     cfg.MySQL.DSN,
-		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
-		GeminiModel:  envDefault("GEMINI_MODEL", "gemini-2.5-flash"),
+		MySQLDSN:      cfg.MySQL.DSN,
+		GeminiAPIKey:  cfg.LLM.GeminiAPIKey,
+		GeminiBaseURL: cfg.LLM.GeminiBaseURL,
+		GeminiModel:   cfg.LLM.GeminiModel,
 	})
 	if err != nil {
 		log.Fatalf("llm bootstrap: %v", err)
@@ -62,11 +62,4 @@ func main() {
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-}
-
-func envDefault(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
 }

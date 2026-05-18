@@ -23,6 +23,7 @@ type Config struct {
 	Avatar   AvatarConfig
 	Google   GoogleConfig
 	Solochat SolochatConfig
+	LLM      LLMConfig
 }
 
 type MySQLConfig struct {
@@ -83,6 +84,13 @@ type SolochatConfig struct {
 	MaxFileSize              int64
 }
 
+type LLMConfig struct {
+	GeminiAPIKey      string
+	GeminiBaseURL     string
+	GeminiModel       string
+	GeminiGraderModel string
+}
+
 func Load() *Config {
 	_ = godotenv.Load()
 
@@ -135,6 +143,12 @@ func Load() *Config {
 		Solochat: SolochatConfig{
 			MaxAttachmentsPerMessage: getInt("SOLOCHAT_MAX_ATTACHMENTS_PER_MESSAGE", 4),
 			MaxFileSize:              int64(getInt("SOLOCHAT_MAX_FILE_SIZE_BYTES", 20*1024*1024)),
+		},
+		LLM: LLMConfig{
+			GeminiAPIKey:      requireEnv("GEMINI_API_KEY"),
+			GeminiBaseURL:     getEnv("GEMINI_BASE_URL", ""),
+			GeminiModel:       getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
+			GeminiGraderModel: getEnv("GEMINI_GRADER_MODEL", ""),
 		},
 	}
 	return cfg

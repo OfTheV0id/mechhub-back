@@ -45,6 +45,7 @@ PATCH  /api/solochat/conversations/:id                      改标题
 DELETE /api/solochat/conversations/:id                      删对话 + 所有消息
 GET    /api/solochat/conversations/:id/messages             列消息(created_at asc),每条带 parts[] + attachments[]
 POST   /api/solochat/conversations/:id/messages/stream      发消息,SSE 流式(10 种事件,见下)
+POST   /api/solochat/conversations/:id/messages/stop        取消该对话当前 in-flight stream(同对话再发 stream 也会隐式取消旧的)
 POST   /api/solochat/attachments                            multipart 上传附件(image/pdf/text/markdown)
 GET    /api/solochat/attachments/:id                        302 跳 OSS 公开 URL
 ```
@@ -81,8 +82,9 @@ Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `
 
 | 决策 | 实现 |
 |---|---|
-| 认证 | Session ID + HttpOnly Cookie,session 存 mongo,TTL 索引自动过期。**不用 JWT** |
-| 数据库 | MongoDB(`v2` 驱动),`bson.ObjectID` 作 ID |
+| 认证 | Session ID + HttpOnly Cookie,session 存 MySQL(表 `user_sessions`),后台 goroutine 每 60s 清过期(`db.StartTTLCleanup`)。**不用 JWT** |
+| 数据库 | MySQL via GORM(`gorm.io/driver/mysql`),UUID v4 字符串作 ID(`char(36)`)。`AutoMigrate` 启动期建表 |
+| LLM | ADK Go (`google.golang.org/adk` v1.2.0) + Gemini 2.5 Flash 原生 SDK;sessions/events/state 由 ADK Go 自动在同库建表 |
 | 邮件 | Resend,域名 `mechhub.oftheloneliness.cn` 已验证 |
 | 头像存储 | 阿里云 OSS,后端代理上传(不是客户端直传)。bucket = `mechhub-avatar`,region = `cn-hangzhou`,公共读 |
 | CORS | 自己写的 ~30 行 middleware,通过 `CORS_ENABLED` / `CORS_ORIGINS` 控制 |
@@ -137,7 +139,7 @@ Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `
 - DB 有这个 email → **自动 link**:补 `google_sub`(如果之前是空);如果 `verified=false` 顺手补成 true;头像只在 `avatar_key==""` 时才拉
 - 任何场景最后都调 `sessions.New` 发 cookie
 
-**state CSRF 防护**:用 HttpOnly cookie `oauth_state` 而不是 mongo TTL 记录,简单且免一次查库。callback 第一时间清空。
+**state CSRF 防护**:用 HttpOnly cookie `oauth_state` 而不是 DB TTL 记录,简单且免一次查库。callback 第一时间清空。
 
 **Open Redirect 防护**:**通过"不接受用户输入"消除攻击面**。`/auth/google` 不接 query 参数,登录后一律跳 `GOOGLE_DEFAULT_RETURN_URL`。如果未来要支持 deep link("登录前点的链接登录完跳回去")再加白名单参数。不要轻易开 `?return=` 的口子。
 
@@ -187,11 +189,11 @@ Message 形态为 `Parts []MessagePart`,part type 可选:`text` / `thinking` / `
 
 ### 6. 头像存 `avatar_key` 不存 URL
 
-mongo 里只存对象 key(如 `avatars/<uid>/<rand>.png`),返回给前端时由 `oss.PublicURL(key)` 拼 URL。**改 CDN 域名只改 `.env` 不动数据**。
+DB 里只存对象 key(`users.avatar_key`,如 `avatars/<uid>/<rand>.png`),返回给前端时由 `oss.PublicURL(key)` 拼 URL。**改 CDN 域名只改 `.env` 不动数据**。
 
 ### 7. SwapAvatarKey 是原子的
 
-`internal/user/repo.go::SwapAvatarKey` 用 `FindOneAndUpdate` 一次性拿旧 key + 设新 key。流程是:**先上传新文件成功 → swap → 删旧文件(best-effort)**,任何一步失败都不会出现"DB 指向不存在 OSS 对象"的孤儿状态。
+`internal/user/repo.go::SwapAvatarKey` 用 GORM transaction(`tx.Select("avatar_key").First` → `Update("avatar_key", newKey)`)一次性拿旧 key + 设新 key。流程是:**先上传新文件成功 → swap → 删旧文件(best-effort)**,任何一步失败都不会出现"DB 指向不存在 OSS 对象"的孤儿状态。
 
 ### 8. ForgotPassword 邮箱不存在也返回成功
 
@@ -226,13 +228,15 @@ https://mechhub.oftheloneliness.cn/*       → 前端(React 静态文件 / SPA)
 **生产 `.env` 切换时改这些(本机开发 `.env` 不动)**:
 
 ```env
-MONGO_URI=<生产 mongo>
+MYSQL_DSN=<生产 mysql DSN>
 CORS_ENABLED=false                ← 同域不需要 CORS
 SESSION_COOKIE_SECURE=true        ← HTTPS 必开
-SESSION_COOKIE_SAMESITE=lax        ← 同域,lax 够用
+SESSION_COOKIE_SAMESITE=lax       ← 同域,lax 够用
 APP_BASE_URL=https://mechhub.oftheloneliness.cn
 GOOGLE_REDIRECT_URL=https://mechhub.oftheloneliness.cn/api/auth/google/callback
 GOOGLE_DEFAULT_RETURN_URL=https://mechhub.oftheloneliness.cn
+GEMINI_API_KEY=<生产 key>
+GEMINI_BASE_URL=                   ← 留空走官方;走中转填代理地址
 ```
 
 代码层面**不需要改任何东西**。如果用户后来改成跨子域 / 跨站部署,SameSite + Secure 那张表还在对话历史里,自己查。
@@ -281,10 +285,10 @@ GOOGLE_DEFAULT_RETURN_URL=https://mechhub.oftheloneliness.cn
 
 ## 还没做、用户已经知道、可以视情况继续做的
 
-- **速率限制**(register / forgot-password 防邮件轰炸):未做。设计选择没定(mongo 计数 vs Redis)。
+- **速率限制**(register / forgot-password 防邮件轰炸):未做。设计选择没定(MySQL 计数 vs Redis)。
 - **信息泄漏收紧**(把"邮箱已注册"和"未注册"两种响应统一):未做。等接前端、看产品形态再说。
 - **resend verification email 独立端点**:未做。当前用"重新 register"已经能 cover。
-- **单元测试**:**完全没有**。`internal/user/service_test.go` 起 mongo container 跑 happy-path 是合理起点。
+- **单元测试**:目前只有 `internal/db/smoke_test.go`(GORM 五表 roundtrip,sqlite 内存)和 `internal/solochat/stop_test.go`(stop 并发原语)。`internal/user/service_test.go` 起 sqlite 内存库跑 happy-path 是下一个合理起点。
 - **多模块**:目前只有 `internal/user/`。新加业务模块按 CLAUDE.md 复制五件套。
 
 ## 用户非常在意的几件事
@@ -311,8 +315,8 @@ GOOGLE_DEFAULT_RETURN_URL=https://mechhub.oftheloneliness.cn
 
 - 操作系统:Windows 10/11,bash 环境是 Git Bash + MSYS。
 - 项目路径:`C:\Users\oft\Documents\workspace\mechhub\mechhub-back`
-- 用户**没有** docker / mongosh 在 PATH。我之前清理 mongo 用的是写一次性 Go 程序到 `/tmp/<x>/main.go` → `go run` → 删除。这套有效,可以复用。
-- 用户当前用 mongo 是 `mongodb://oft:oft@oftheloneliness.cn/...`(他自己服务器上的 mongo,不是本地)。期间临时切换过 localhost mongo,后又换回去。
+- 用户**没有** docker 在 PATH。如果需要临时跑数据访问代码(清表 / 查状态),写一次性 Go 程序到 `/tmp/<x>/main.go` 用 `gorm.Open(mysql.Open(dsn))` 直连即可,跑完删除。
+- 用户的 MySQL 在自己服务器上(`mechhub:...@tcp(oftheloneliness.cn:3306)/mechhub`),不是本地。期间 Mongo→MySQL 完整迁移由 Opus 在轮 7 完成,不再走 Mongo。
 - Resend 的 `MAIL_FROM` 用 `MechHub <no-reply@mechhub.oftheloneliness.cn>`,域名已经在 Resend 验证过。
 - OSS:`mechhub-avatar` bucket,`cn-hangzhou`。AccessKey 见上文"未结的安全债务"。
 - Google OAuth Client:已在 Cloud Console 申请,registered redirect URIs 见"部署计划"段。client_secret 状态见"未结的安全债务"。

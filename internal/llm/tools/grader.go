@@ -112,10 +112,14 @@ func geminiClient(ctx context.Context) (*genai.Client, error) {
 	if cachedGemini != nil {
 		return cachedGemini, nil
 	}
-	c, err := genai.NewClient(ctx, &genai.ClientConfig{
+	clientCfg := &genai.ClientConfig{
 		APIKey:  os.Getenv("GEMINI_API_KEY"),
 		Backend: genai.BackendGeminiAPI,
-	})
+	}
+	if base := os.Getenv("GEMINI_BASE_URL"); base != "" {
+		clientCfg.HTTPOptions.BaseURL = base
+	}
+	c, err := genai.NewClient(ctx, clientCfg)
 	if err != nil {
 		return nil, err
 	}
