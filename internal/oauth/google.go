@@ -28,12 +28,12 @@ type GoogleUser struct {
 	Picture       string `json:"picture"`
 }
 
-func NewGoogle(cfg config.GoogleConfig) *Google {
+func NewGoogle(cfg config.GoogleConfig, port string) *Google {
 	return &Google{
 		cfg: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
-			RedirectURL:  cfg.RedirectURL,
+			RedirectURL:  "http://localhost:" + port + "/api/auth/google/callback",
 			Endpoint:     google.Endpoint,
 			Scopes:       []string{"openid", "email", "profile"},
 		},

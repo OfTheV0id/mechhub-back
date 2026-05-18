@@ -43,7 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("oss init: %v", err)
 	}
-	google := oauth.NewGoogle(cfg.Google)
+	google := oauth.NewGoogle(cfg.Google, cfg.Port)
 
 	llmSvc, err := llm.Bootstrap(ctx, llm.Config{
 		MySQLDSN:      cfg.MySQL.DSN,

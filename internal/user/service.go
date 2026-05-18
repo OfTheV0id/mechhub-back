@@ -129,7 +129,7 @@ func (s *Service) AvatarURL(userID, key string) string {
 	if key == "" {
 		return ""
 	}
-	return s.cfg.App.BackendBaseURL + "/api/user/avatar/" + userID + "?v=" + cacheBust(key)
+	return "http://localhost:" + s.cfg.Port + "/api/user/avatar/" + userID + "?v=" + cacheBust(key)
 }
 
 func cacheBust(avatarKey string) string {

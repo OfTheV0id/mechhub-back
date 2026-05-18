@@ -153,7 +153,7 @@ func (s *Service) OpenAttachment(ctx context.Context, id, ownerID string) (*Uplo
 
 // AttachmentURL 拼出后端 stream-through URL。
 func (s *Service) AttachmentURL(fileID string) string {
-	return s.cfg.App.BackendBaseURL + "/api/solochat/attachments/" + fileID
+	return "http://localhost:" + s.cfg.Port + "/api/solochat/attachments/" + fileID
 }
 
 func (s *Service) ToAttachmentDTO(f *UploadedFile) AttachmentDTO {

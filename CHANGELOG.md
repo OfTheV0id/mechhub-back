@@ -9,6 +9,21 @@
 
 ---
 
+## Claude 轮 9 — 2026-05-18 — 消除冗余 env 变量
+
+### 杂项
+
+1. **删除 `BACKEND_BASE_URL` env**
+   - `avatar_url` / `attachment.url` 改为代码内 `"http://localhost:" + PORT + "/api/..."` 拼接
+   - `config.go` 中 `AppConfig.BackendBaseURL` 字段移除
+
+2. **删除 `GOOGLE_REDIRECT_URL` env**
+   - Google OAuth redirect URL 改为代码内 `"http://localhost:" + PORT + "/api/auth/google/callback"` 拼接
+   - `config.go` 中 `GoogleConfig.RedirectURL` 字段移除
+   - `oauth.NewGoogle` 签名变更为 `NewGoogle(cfg, port)`
+
+---
+
 ## Claude 轮 8 — 2026-05-16 — OSS 私有化 + 全 stream-through
 
 ### ⚠️ 破坏性变更
