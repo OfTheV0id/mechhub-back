@@ -1,25 +1,29 @@
 $kind: http-request
 name: Upload attachments
-description: >-
-  Upload 1-N files in one multipart form. Field name: `files` (can
-  repeat). Allowed MIME: image/png|jpeg|webp|gif, application/pdf,
-  text/plain, text/markdown. Max single file size =
-  `SOLOCHAT_MAX_FILE_SIZE_BYTES` (default 20 MiB). DOCX/Office and
-  audio/video are NOT accepted.
+description: |-
+  Upload 1-N files in one multipart form.
 
+  In Postman, open the **Body** tab → choose **form-data** → add rows with key `files`, set the row type to **File**, then pick local files. Repeat the same key for multiple files.
 
-  Response returns the uploaded file metadata including the public
-  URL. Pass the IDs in `attachments` of the next Send Message Stream
-  call.
+  Allowed MIME: image/png|jpeg|webp|gif, application/pdf, text/plain, text/markdown. Max single file size = `SOLOCHAT_MAX_FILE_SIZE_BYTES` (default 20 MiB). DOCX/Office and audio/video are NOT accepted.
 
+  Response returns the uploaded file metadata including the stream-through URL. Pass the IDs in `attachments` of the next Send Message Stream call.
 
-  The Python agent receives attachment bytes as multimodal `Part`s:
-  images / PDFs go to the LLM directly so the model "sees" them; text /
-  Markdown content is inlined into the prompt. The LLM may also call
-  `grade_submission` / `ocr_images_cached` tools on uploaded images
-  for structured analysis.
+  The Go backend passes attachment bytes as multimodal `Part`s to the ADK: images / PDFs go to the LLM directly so the model "sees" them; text / Markdown content is inlined into the prompt. The LLM may also call `grade_submission` / `ocr_images_cached` tools on uploaded images for structured analysis.
 url: "{{baseUrl}}/api/solochat/attachments"
 method: POST
 headers:
   Accept: application/json
+body:
+  type: formdata
+  content:
+    - type: file
+      key: files
+      src:
+        - /C:/Users/oft/Downloads/answer.png
+        - /C:/Users/oft/Downloads/题目02.png
+        - /C:/Users/oft/Downloads/题目01.png
+      description: ""
+      disabled: false
+examples: .resources/Upload attachments.resources/examples
 order: 3000

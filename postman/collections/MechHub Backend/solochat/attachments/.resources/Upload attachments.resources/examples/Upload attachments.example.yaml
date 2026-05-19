@@ -1,0 +1,70 @@
+$kind: http-example
+description: |-
+  Upload 1-N files in one multipart form.
+
+  In Postman, open the **Body** tab → choose **form-data** → add rows with key `files`, set the row type to **File**, then pick local files. Repeat the same key for multiple files.
+
+  Allowed MIME: image/png|jpeg|webp|gif, application/pdf, text/plain, text/markdown. Max single file size = `SOLOCHAT_MAX_FILE_SIZE_BYTES` (default 20 MiB). DOCX/Office and audio/video are NOT accepted.
+
+  Response returns the uploaded file metadata including the stream-through URL. Pass the IDs in `attachments` of the next Send Message Stream call.
+
+  The Go backend passes attachment bytes as multimodal `Part`s to the ADK: images / PDFs go to the LLM directly so the model "sees" them; text / Markdown content is inlined into the prompt. The LLM may also call `grade_submission` / `ocr_images_cached` tools on uploaded images for structured analysis.
+request:
+  url: "{{baseUrl}}/api/solochat/attachments"
+  method: POST
+  headers:
+    Accept: application/json
+  body:
+    type: formdata
+    content:
+      - type: file
+        key: files
+        src:
+          - /C:/Users/oft/Downloads/answer.png
+          - /C:/Users/oft/Downloads/题目02.png
+          - /C:/Users/oft/Downloads/题目01.png
+        description: ""
+        disabled: false
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    content-type: application/json; charset=utf-8
+    date: Tue, 19 May 2026 08:17:31 GMT
+    content-length: "712"
+  body:
+    type: json
+    content: |-
+      {
+        "code": 0,
+        "msg": "成功",
+        "data": {
+          "attachments": [
+            {
+              "id": "fd5a1cb9-fb02-43db-aa9d-b1616b19b62e",
+              "kind": "image",
+              "mime_type": "image/png",
+              "original_name": "answer.png",
+              "size": 242218,
+              "url": "http://localhost:8080/api/solochat/attachments/fd5a1cb9-fb02-43db-aa9d-b1616b19b62e"
+            },
+            {
+              "id": "fdf50d15-5f60-4a01-8f1f-29fd77462a8f",
+              "kind": "image",
+              "mime_type": "image/png",
+              "original_name": "题目02.png",
+              "size": 12213,
+              "url": "http://localhost:8080/api/solochat/attachments/fdf50d15-5f60-4a01-8f1f-29fd77462a8f"
+            },
+            {
+              "id": "ecc00eb0-8840-4c6f-9b93-82e2646de65b",
+              "kind": "image",
+              "mime_type": "image/png",
+              "original_name": "题目01.png",
+              "size": 85683,
+              "url": "http://localhost:8080/api/solochat/attachments/ecc00eb0-8840-4c6f-9b93-82e2646de65b"
+            }
+          ]
+        }
+      }
+order: 1779178654325

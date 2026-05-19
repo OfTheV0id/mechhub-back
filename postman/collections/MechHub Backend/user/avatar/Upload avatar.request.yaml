@@ -16,7 +16,7 @@ body:
     - type: file
       key: avatar
       src:
-        - /C:/Users/oft/Pictures/微信图片_20260114123505_426_90.jpg
+        - /C:/Users/oft/Pictures/微信图片_20251111172001_232_90.jpg
       description: ""
       disabled: false
 order: 1700

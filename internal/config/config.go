@@ -51,7 +51,8 @@ type MailConfig struct {
 }
 
 type AppConfig struct {
-	BaseURL string // 前端 base URL,用于邮件里的链接
+	BaseURL        string // 前端 base URL,用于邮件里的链接
+	BackendBaseURL string // 后端外部 URL,构造 avatar/attachment/Google callback。默认 http://localhost:<PORT>
 }
 
 type TokenConfig struct {
@@ -92,8 +93,10 @@ type LLMConfig struct {
 func Load() *Config {
 	_ = godotenv.Load()
 
+	port := getEnv("PORT", "8080")
+
 	cfg := &Config{
-		Port: getEnv("PORT", "8080"),
+		Port: port,
 		MySQL: MySQLConfig{
 			DSN: requireEnv("MYSQL_DSN"),
 		},
@@ -115,7 +118,8 @@ func Load() *Config {
 			BgURL:        getEnv("MAIL_BG_URL", ""),
 		},
 		App: AppConfig{
-			BaseURL: requireEnv("APP_BASE_URL"),
+			BaseURL:        requireEnv("APP_BASE_URL"),
+			BackendBaseURL: getEnv("BACKEND_BASE_URL", "http://localhost:"+port),
 		},
 		Token: TokenConfig{
 			VerifyTTL:          time.Duration(getInt("VERIFY_TOKEN_TTL_HOURS", 24)) * time.Hour,

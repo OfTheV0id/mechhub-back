@@ -1,0 +1,68 @@
+$kind: http-example
+name: Send message stream
+description: |-
+  Send a user message to a conversation. Responds with `text/event-stream` — one SSE frame per event: ``` data: {"type":"...","message_id":"...",...}\n\n ```
+
+  ## SSE event types (read `type` field of the JSON in `data:` line)
+
+  - `user_input`         — user message echo (`message.id` 是
+    `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
+    重新 `GET /messages` 拿)
+  - `message_start`      — assistant turn begins (`message_id`, `model`) - `reasoning_delta`    — model's thinking trace, streamed token by token - `text_delta`         — assistant text chunk - `text_complete`      — text block finished (`text` is the full final text) - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON) - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`) - `conversation_title` — only on the very first message (auto-named) - `error`              — agent or backend error - `message_done`       — assistant turn ended (`finish_reason`)
+
+  Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
+
+  Typical sequence for an answer that uses a tool: ``` user_input → message_start → reasoning_delta* → tool_call_start
+    → tool_result → text_delta* → text_complete → message_done
+  ```
+
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream, split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native `EventSource` API can't be used because this endpoint is POST.
+
+  ## 持久化(轮 7)
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。 Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体 `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到 session.state 的 `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查挂到 user message 的 attachments[] 字段。
+request:
+  url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: text/event-stream
+  body:
+    type: json
+    content: |+
+      {
+        "content": "你可以批改一下这个作业吗",
+        "attachments": ["fd5a1cb9-fb02-43db-aa9d-b1616b19b62e", "fdf50d15-5f60-4a01-8f1f-29fd77462a8f", "ecc00eb0-8840-4c6f-9b93-82e2646de65b"]
+      }
+
+
+
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    cache-control: no-cache
+    connection: keep-alive
+    content-type: text/event-stream; charset=utf-8
+    x-accel-buffering: no
+    date: Tue, 19 May 2026 09:23:07 GMT
+    transfer-encoding: chunked
+  body:
+    type: text
+    content: |+
+      data: {"type":"user_input","message":{"id":"pending-user-1d2ae82c-33a1-4e4c-b0a6-216a652cc59e","conversation_id":"1409b896-7a35-43c2-a1e1-de2165d8c0a6","role":"user","parts":[{"type":"text","text":"你可以批改一下这个作业吗"}],"attachments":[{"id":"ecc00eb0-8840-4c6f-9b93-82e2646de65b","kind":"image","mime_type":"image/png","original_name":"题目01.png","size":85683,"url":"http://localhost:8080/api/solochat/attachments/ecc00eb0-8840-4c6f-9b93-82e2646de65b"},{"id":"fd5a1cb9-fb02-43db-aa9d-b1616b19b62e","kind":"image","mime_type":"image/png","original_name":"answer.png","size":242218,"url":"http://localhost:8080/api/solochat/attachments/fd5a1cb9-fb02-43db-aa9d-b1616b19b62e"},{"id":"fdf50d15-5f60-4a01-8f1f-29fd77462a8f","kind":"image","mime_type":"image/png","original_name":"题目02.png","size":12213,"url":"http://localhost:8080/api/solochat/attachments/fdf50d15-5f60-4a01-8f1f-29fd77462a8f"}],"status":"completed","created_at":"2026-05-19T17:23:07+08:00"}}
+
+      data: {"type":"message_start","message_id":"msg_f00312de-b55"}
+
+      data: {"type":"tool_call_start","message_id":"msg_f00312de-b55","tool_use_id":"adk-61742caf-21d3-4551-8f0b-cb10cb8747c4","name":"ocr_images_cached","input":{"image_paths":["C:\\Users\\oft\\AppData\\Local\\Temp\\mechhub\\1409b896-7a35-43c2-a1e1-de2165d8c0a6\\ecc00eb0-8840-4c6f-b1e1-de2165d8c0a6-__01.png","C:\\Users\\oft\\AppData\\Local\\Temp\\mechhub\\1409b896-7a35-43c2-a1e1-de2165d8c0a6\\fd5a1cb9-fb02-43db-aa9d-b1616b19b62e-answer.png","C:\\Users\\oft\\AppData\\Local\\Temp\\mechhub\\1409b896-7a35-43c2-a1e1-de2165d8c0a6\\fdf50d15-5f60-4a01-8f1f-29fd77462a8f-__02.png"]}}
+
+      data: {"type":"tool_result","message_id":"msg_f00312de-b55","tool_use_id":"adk-61742caf-21d3-4551-8f0b-cb10cb8747c4","name":"ocr_images_cached","output":{"error":"read C:\\Users\\oft\\AppData\\Local\\Temp\\mechhub\\1409b896-7a35-43c2-a1e1-de2165d8c0a6\\ecc00eb0-8840-4c6f-b1e1-de2165d8c0a6-__01.png: open C:\\Users\\oft\\AppData\\Local\\Temp\\mechhub\\1409b896-7a35-43c2-a1e1-de2165d8c0a6\\ecc00eb0-8840-4c6f-b1e1-de2165d8c0a6-__01.png: The system cannot find the file specified."}}
+
+      data: {"type":"text_delta","message_id":"msg_f00312de-b55","delta":"抱歉，我无法访问您提供的图片路径进行批改。系统提示找不到文件。\n\n请您重新上传图片，或者检查一下文件路径是否正确。"}
+
+      data: {"type":"text_complete","message_id":"msg_f00312de-b55","text":"抱歉，我无法访问您提供的图片路径进行批改。系统提示找不到文件。\n\n请您重新上传图片，或者检查一下文件路径是否正确。"}
+
+      data: {"type":"message_done","message_id":"msg_f00312de-b55","finish_reason":"stop"}
+
+      data: {"type":"conversation_title","conversation":{"id":"1409b896-7a35-43c2-a1e1-de2165d8c0a6","title":"你可以批改一下这个作业吗","created_at":"2026-05-19T09:22:54Z","updated_at":"2026-05-19T17:23:23+08:00"}}
+
+order: 1329764635700728

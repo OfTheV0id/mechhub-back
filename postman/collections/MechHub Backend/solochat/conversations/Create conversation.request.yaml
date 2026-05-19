@@ -1,8 +1,6 @@
 $kind: http-request
 name: Create conversation
-description: >-
-  Create a new conversation. Title is optional (defaults to "新对话",
-  auto-renamed to the first user message after the first reply).
+description: Create a new conversation. Title is optional (defaults to "新对话", auto-renamed to the first user message after the first reply).
 url: "{{baseUrl}}/api/solochat/conversations"
 method: POST
 headers:
@@ -12,6 +10,6 @@ body:
   type: json
   content: |-
     {
-      "title": ""
+      "title": "011"
     }
 order: 1100

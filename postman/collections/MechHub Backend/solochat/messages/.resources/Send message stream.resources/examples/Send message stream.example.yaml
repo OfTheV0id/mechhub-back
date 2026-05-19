@@ -1,0 +1,68 @@
+$kind: http-example
+description: |-
+  Send a user message to a conversation. Responds with `text/event-stream` — one SSE frame per event: ``` data: {"type":"...","message_id":"...",...}\n\n ```
+
+  ## SSE event types (read `type` field of the JSON in `data:` line)
+
+  - `user_input`         — user message echo (`message.id` 是
+    `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
+    重新 `GET /messages` 拿)
+  - `message_start`      — assistant turn begins (`message_id`, `model`) - `reasoning_delta`    — model's thinking trace, streamed token by token - `text_delta`         — assistant text chunk - `text_complete`      — text block finished (`text` is the full final text) - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON) - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`) - `conversation_title` — only on the very first message (auto-named) - `error`              — agent or backend error - `message_done`       — assistant turn ended (`finish_reason`)
+
+  Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
+
+  Typical sequence for an answer that uses a tool: ``` user_input → message_start → reasoning_delta* → tool_call_start
+    → tool_result → text_delta* → text_complete → message_done
+  ```
+
+  典型批改两步流程:``` user_input → message_start → tool_call_start(ocr_images_cached) → tool_result → tool_call_start(grade_with_ocr) → tool_result → text_delta* → text_complete → message_done ```
+
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream, split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native `EventSource` API can't be used because this endpoint is POST.
+
+  ## 持久化(轮 7)
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。 Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体 `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到 session.state 的 `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查挂到 user message 的 attachments[] 字段。
+request:
+  url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: text/event-stream
+  body:
+    type: json
+    content: |-
+      {
+        "content": "你有什么工具可以使用",
+        "attachments": []
+      }
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    cache-control: no-cache
+    connection: keep-alive
+    content-type: text/event-stream; charset=utf-8
+    x-accel-buffering: no
+    date: Mon, 18 May 2026 16:30:48 GMT
+    transfer-encoding: chunked
+  body:
+    type: text
+    content: |+
+      data: {"type":"user_input","message":{"id":"pending-user-1df2a003-3c86-4c86-bb24-db7a38b0b9d9","conversation_id":"c4b4a333-b919-4e29-b59d-f427df5ef453","role":"user","parts":[{"type":"text","text":"你有什么工具可以使用"}],"status":"completed","created_at":"2026-05-19T00:30:48+08:00"}}
+
+      data: {"type":"message_start","message_id":"msg_85c822cc-889"}
+
+      data: {"type":"text_delta","message_id":"msg_85c822cc-889","delta":"我可以使用以下两个工具(必须按顺序调用)来帮助你：\n\n1.  **OCR 文字识别 (ocr_images_cached)**:\n    *   **功能"}
+
+      data: {"type":"text_delta","message_id":"msg_85c822cc-889","delta":"**: 对你上传的图片进行文字识别，返回图片的页数、字数、是否包含公式以及前 200 字的预览。完整的 OCR JSON 会自动缓存到本次 session。\n    *   **何时使用"}
+
+      data: {"type":"text_delta","message_id":"msg_85c822cc-889","delta":"**: 当你只想识别图片中的文字内容时；或者作为下一步批改的前置步骤。\n\n2.  **作业批改 (grade_with_ocr)**:\n    *   **功能**: 对一批作业图片做完整批改，返回结构化的整体得分、每页步骤分析与错误更正。"}
+
+      data: {"type":"text_delta","message_id":"msg_85c822cc-889","delta":"\n    *   **前置条件**: 必须先对同一批 image_paths 调用过 ocr_images_cached（本工具只读 session 缓存，不会自己 OCR）。\n    *   **何时使用**: 当你"}
+
+      data: {"type":"text_delta","message_id":"msg_85c822cc-889","delta":"上传了作业图片，希望我进行批改、查看分数或找出错误时——先 OCR 再批改，两次 image_paths 必须完全一致。\n\n请告诉我你需要哪种帮助！"}
+
+      data: {"type":"text_complete","message_id":"msg_85c822cc-889","text":"我可以使用以下两个工具(必须按顺序调用)来帮助你：\n\n1.  **OCR 文字识别 (ocr_images_cached)**:\n    *   **功能**: 对你上传的图片进行文字识别，返回图片的页数、字数、是否包含公式以及前 200 字的预览。完整的 OCR JSON 会自动缓存到本次 session。\n    *   **何时使用**: 当你只想识别图片中的文字内容时；或者作为下一步批改的前置步骤。\n\n2.  **作业批改 (grade_with_ocr)**:\n    *   **功能**: 对一批作业图片做完整批改，返回结构化的整体得分、每页步骤分析与错误更正。\n    *   **前置条件**: 必须先对同一批 image_paths 调用过 ocr_images_cached（本工具只读 session 缓存，不会自己 OCR）。\n    *   **何时使用**: 当你上传了作业图片，希望我进行批改、查看分数或找出错误时——先 OCR 再批改，两次 image_paths 必须完全一致。\n\n请告诉我你需要哪种帮助！"}
+
+      data: {"type":"message_done","message_id":"msg_85c822cc-889","finish_reason":"stop"}
+
+order: 1779121888494

@@ -1,52 +1,24 @@
 $kind: http-request
-name: Send message stream
-description: >-
-  Send a user message to a conversation. Responds with
-  `text/event-stream` — one SSE frame per event:
-  ```
-  data: {"type":"...","message_id":"...",...}\n\n
-  ```
-
+description: |-
+  Send a user message to a conversation. Responds with `text/event-stream` — one SSE frame per event: ``` data: {"type":"...","message_id":"...",...}\n\n ```
 
   ## SSE event types (read `type` field of the JSON in `data:` line)
-
 
   - `user_input`         — user message echo (`message.id` 是
     `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
     重新 `GET /messages` 拿)
-  - `message_start`      — assistant turn begins (`message_id`, `model`)
-  - `reasoning_delta`    — model's thinking trace, streamed token by token
-  - `text_delta`         — assistant text chunk
-  - `text_complete`      — text block finished (`text` is the full final text)
-  - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON)
-  - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`)
-  - `conversation_title` — only on the very first message (auto-named)
-  - `error`              — agent or backend error
-  - `message_done`       — assistant turn ended (`finish_reason`)
-
+  - `message_start`      — assistant turn begins (`message_id`, `model`) - `reasoning_delta`    — model's thinking trace, streamed token by token - `text_delta`         — assistant text chunk - `text_complete`      — text block finished (`text` is the full final text) - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON) - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`) - `conversation_title` — only on the very first message (auto-named) - `error`              — agent or backend error - `message_done`       — assistant turn ended (`finish_reason`)
 
   Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
 
-
-  Typical sequence for an answer that uses a tool:
-  ```
-  user_input → message_start → reasoning_delta* → tool_call_start
+  Typical sequence for an answer that uses a tool: ``` user_input → message_start → reasoning_delta* → tool_call_start
     → tool_result → text_delta* → text_complete → message_done
   ```
 
-
-  Frontend pattern: `fetch()` with POST body, then read response body as a stream,
-  split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native
-  `EventSource` API can't be used because this endpoint is POST.
-
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream, split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native `EventSource` API can't be used because this endpoint is POST.
 
   ## 持久化(轮 7)
-
-  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。
-  Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体
-  `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到
-  session.state 的 `_solochat_attachments_<invocation_id>` 键,后续
-  `GET /messages` 反查挂到 user message 的 attachments[] 字段。
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。 Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体 `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到 session.state 的 `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查挂到 user message 的 attachments[] 字段。
 url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
 method: POST
 headers:
@@ -56,7 +28,12 @@ body:
   type: json
   content: |-
     {
-      "content": "你好,请介绍下自己",
-      "attachments": []
+      "content": "你可以批改一下这个作业吗",
+      "attachments": ["fd5a1cb9-fb02-43db-aa9d-b1616b19b62e", "fdf50d15-5f60-4a01-8f1f-29fd77462a8f", "ecc00eb0-8840-4c6f-9b93-82e2646de65b"]
     }
+    // {
+    //   "content": "你有什么工具可以调用",
+    //   "attachments": []
+    // }
+examples: .resources/Send message stream.resources/examples
 order: 2100

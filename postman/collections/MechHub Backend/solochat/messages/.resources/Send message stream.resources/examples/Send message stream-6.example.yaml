@@ -1,0 +1,142 @@
+$kind: http-example
+name: Send message stream
+description: |-
+  Send a user message to a conversation. Responds with `text/event-stream` — one SSE frame per event: ``` data: {"type":"...","message_id":"...",...}\n\n ```
+
+  ## SSE event types (read `type` field of the JSON in `data:` line)
+
+  - `user_input`         — user message echo (`message.id` 是
+    `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
+    重新 `GET /messages` 拿)
+  - `message_start`      — assistant turn begins (`message_id`, `model`) - `reasoning_delta`    — model's thinking trace, streamed token by token - `text_delta`         — assistant text chunk - `text_complete`      — text block finished (`text` is the full final text) - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON) - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`) - `conversation_title` — only on the very first message (auto-named) - `error`              — agent or backend error - `message_done`       — assistant turn ended (`finish_reason`)
+
+  Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
+
+  Typical sequence for an answer that uses a tool: ``` user_input → message_start → reasoning_delta* → tool_call_start
+    → tool_result → text_delta* → text_complete → message_done
+  ```
+
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream, split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native `EventSource` API can't be used because this endpoint is POST.
+
+  ## 持久化(轮 7)
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。 Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体 `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到 session.state 的 `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查挂到 user message 的 attachments[] 字段。
+request:
+  url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: text/event-stream
+  body:
+    type: json
+    content: |+
+      {
+        "content": "你可以批改一下这个作业吗",
+        "attachments": ["fd5a1cb9-fb02-43db-aa9d-b1616b19b62e", "fdf50d15-5f60-4a01-8f1f-29fd77462a8f", "ecc00eb0-8840-4c6f-9b93-82e2646de65b"]
+      }
+
+
+
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    cache-control: no-cache
+    connection: keep-alive
+    content-type: text/event-stream; charset=utf-8
+    x-accel-buffering: no
+    date: Tue, 19 May 2026 10:00:12 GMT
+    transfer-encoding: chunked
+  body:
+    type: text
+    content: |+
+      data: {"type":"user_input","message":{"id":"pending-user-1229d816-c9c9-4c7d-84a1-fc1d4927250e","conversation_id":"aadae9f7-11e1-454e-8470-fdb76d250339","role":"user","parts":[{"type":"text","text":"你可以批改一下这个作业吗"}],"attachments":[{"id":"ecc00eb0-8840-4c6f-9b93-82e2646de65b","kind":"image","mime_type":"image/png","original_name":"题目01.png","size":85683,"url":"http://localhost:8080/api/solochat/attachments/ecc00eb0-8840-4c6f-9b93-82e2646de65b"},{"id":"fd5a1cb9-fb02-43db-aa9d-b1616b19b62e","kind":"image","mime_type":"image/png","original_name":"answer.png","size":242218,"url":"http://localhost:8080/api/solochat/attachments/fd5a1cb9-fb02-43db-aa9d-b1616b19b62e"},{"id":"fdf50d15-5f60-4a01-8f1f-29fd77462a8f","kind":"image","mime_type":"image/png","original_name":"题目02.png","size":12213,"url":"http://localhost:8080/api/solochat/attachments/fdf50d15-5f60-4a01-8f1f-29fd77462a8f"}],"status":"completed","created_at":"2026-05-19T18:00:12+08:00"}}
+
+      data: {"type":"message_start","message_id":"msg_eb8d3d88-99c"}
+
+      data: {"type":"tool_call_start","message_id":"msg_eb8d3d88-99c","tool_use_id":"adk-ba45b238-4d21-45d2-9143-4a40e9492fad","name":"ocr_images_cached","input":{"image_indices":[0,1,2]}}
+
+      data: {"type":"tool_result","message_id":"msg_eb8d3d88-99c","tool_use_id":"adk-ba45b238-4d21-45d2-9143-4a40e9492fad","name":"ocr_images_cached","output":{"cached_to_state":true,"has_formulas":true,"image_count":3,"ok":true,"page_count":3,"preview":"图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为铰链连接。A\n处为固定端约束,E处为固定铰链支座。在AB段受载荷集度为q的均布力作用,BC段受\n�","text_chars":1319}}
+
+      data: {"type":"tool_call_start","message_id":"msg_eb8d3d88-99c","tool_use_id":"adk-05f09df5-7545-4f38-9f0a-6dd39ddf0a3a","name":"grade_with_ocr","input":{"image_indices":[0,1,2]}}
+
+      : ping
+
+      : ping
+
+      : ping
+
+      : ping
+
+      data: {"type":"tool_result","message_id":"msg_eb8d3d88-99c","tool_use_id":"adk-05f09df5-7545-4f38-9f0a-6dd39ddf0a3a","name":"grade_with_ocr","output":{"overallComment":"学生的解题思路在受力分析和识别二力杆方面有初步的正确性，但对几何尺寸（如均布载荷作用长度）和力臂的理解存在错误。平衡方程的列写非常混乱且多处有误，导致最终的约束反力计算结果大多不正确。建议学生加强对基本力学原理、几何尺寸判读和方程列写规范的练习。","overallScore":2.5,"pages":[{"contentBlocks":[{"bbox":{"normalizedVertices":[{"x":0.04761905,"y":0.08301158},{"x":0.9414966,"y":0.08301158},{"x":0.9414966,"y":0.2953668},{"x":0.04761905,"y":0.2953668}]},"confidence":0.9107560515403748,"id":"cb_1","orientation":"PAGE_UP","sourceText":"图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为铰链连接。A\n处为固定端约束,E处为固定铰链支座。在AB段受��","text":"图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为铰链连接。A处为固定端约束,E处为固定铰链支座。在AB段受载荷集度为q的均布力作用,BC段受集中力F作用,ED段上作用有力偶矩为M的力偶;且 M=qa² F=qa, 长度a为已知,各杆自重和各处摩擦均不计。试求:A、B、E处的约束反力。","type":"question"}],"documentType":"question_page","formulas":[{"bbox":{"normalizedVertices":[{"x":0.5482993,"y":0.4864865},{"x":0.5714286,"y":0.4864865},{"x":0.5714286,"y":0.5057915},{"x":0.5482993,"y":0.5057915}]},"confidence":0.9509987831115723,"id":"f_1","latex":"F=qa","orientation":"PAGE_UP","sourceText":"F=qa"},{"bbox":{"normalizedVertices":[{"x":0.54285717,"y":0.67760617},{"x":0.56462586,"y":0.67760617},{"x":0.56462586,"y":0.6988417},{"x":0.54285717,"y":0.6988417}]},"confidence":0.9435880184173584,"id":"f_2","latex":"a","orientation":"PAGE_UP","sourceText":"��"},{"bbox":{"normalizedVertices":[{"x":0.629932,"y":0.9324324},{"x":0.64625853,"y":0.9324324},{"x":0.64625853,"y":0.94787645},{"x":0.629932,"y":0.94787645}]},"confidence":0.8943582773208618,"id":"f_3","latex":"a","orientation":"PAGE_UP","sourceText":"��"},{"bbox":{"normalizedVertices":[{"x":0.85986394,"y":0.6293436},{"x":0.8816326,"y":0.6293436},{"x":0.8816326,"y":0.6486486},{"x":0.85986394,"y":0.6486486}]},"confidence":0.9543097019195557,"id":"f_4","latex":"q","orientation":"PAGE_UP","sourceText":"q�"},{"bbox":{"normalizedVertices":[{"x":0.8897959,"y":0.5637066},{"x":0.90612245,"y":0.5637066},{"x":0.90612245,"y":0.57915056},{"x":0.8897959,"y":0.57915056}]},"confidence":0.8571667671203613,"id":"f_5","latex":"a","orientation":"PAGE_UP","sourceText":"��"},{"bbox":{"normalizedVertices":[{"x":0.89115644,"y":0.76061773},{"x":0.90612245,"y":0.76061773},{"x":0.90612245,"y":0.7760618},{"x":0.89115644,"y":0.7760618}]},"confidence":0.8727045059204102,"id":"f_6","latex":"a","orientation":"PAGE_UP","sourceText":"��"},{"bbox":{"normalizedVertices":[{"x":0.6680272,"y":0.86293435},{"x":0.692517,"y":0.86293435},{"x":0.692517,"y":0.8841699},{"x":0.6680272,"y":0.8841699}]},"confidence":0.967427670955658,"id":"f_7","latex":"M=qa^2","orientation":"PAGE_UP","sourceText":"��"},{"bbox":{"normalizedVertices":[{"x":0.844898,"y":0.9111969},{"x":0.8666667,"y":0.9111969},{"x":0.8666667,"y":0.93050194},{"x":0.844898,"y":0.93050194}]},"confidence":0.9468271732330322,"id":"f_8","latex":"a","orientation":"PAGE_UP","sourceText":"��"}],"grading":{"applicable":false,"stepEvaluations":[]},"needsHumanReview":true,"pageNumber":1,"summary":"此页包含第8题的题目描述和示意图。题目要求计算图示平面结构在A、B、E处的约束反力。该结构由直角折杆ABC、直杆BD和直杆DE组成，A处为固定端约束，E处为固定铰链支座，B和D处为铰链连接。AB段受均布力q，BC段受集中力F，ED段受力偶M。已知M=qa²，F=qa，长度参数为a。","suspectedOcrIssues":["The OCR for the main question text (paragraphs[0]) is severely truncated and contains unrecognized characters (�). The reconstructed text for cb_1 combines information from the image and the partial OCR to be complete.","Some visual elements identified as formulas (e.g., '�荷�', '�布力��') by OCR are actually fragmented parts of the main question text or diagram labels that are better represented as part of the overall text or more complete formulas."]},{"contentBlocks":[{"bbox":{"normalizedVertices":[{"x":0.13682678,"y":0.099709585},{"x":0.5895197,"y":0.10551791},{"x":0.5880641,"y":0.15876089},{"x":0.13537118,"y":0.15295257}]},"confidence":0.786964476108551,"id":"cb_1","orientation":"PAGE_UP","sourceText":"8. 图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为校链连接。A\n处为固定端约束,书处为固定铰链支座。在A","text":"8. 图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为校链连接。A处为固定端约束,书处为固定铰链支座。在A","type":"question"},{"bbox":{"normalizedVertices":[{"x":0.48471615,"y":0.4249758},{"x":0.8937409,"y":0.40077445},{"x":0.9010189,"y":0.45982575},{"x":0.49344978,"y":0.48499516}]},"confidence":0.875,"id":"cb_2","orientation":"PAGE_UP","sourceText":"佣、先整体分析","text":"佣、先整体分析","type":"explanation"},{"bbox":{"normalizedVertices":[{"x":0.69738,"y":0.49137},{"x":0.95415,"y":0.4904},{"x":0.95463,"y":0.50585},{"x":0.69786,"y":0.50682}]},"confidence":0.91,"id":"cb_3","orientation":"PAGE_UP","sourceText":"隔离CBA,易知BD为二力析","text":"隔离CBA,易知BD为二力析","type":"explanation"},{"bbox":{"normalizedVertices":[{"x":0.35227,"y":0.77196},{"x":0.38077,"y":0.77196},{"x":0.38077,"y":0.78741},{"x":0.35227,"y":0.78741}]},"confidence":0.91,"id":"cb_4","orientation":"PAGE_UP","sourceText":"哪能","text":"解得","type":"explanation"}],"documentType":"mixed_question_answer","formulas":[{"bbox":{"normalizedVertices":[{"x":0.48471615,"y":0.4249758},{"x":0.8937409,"y":0.40077445},{"x":0.9010189,"y":0.45982575},{"x":0.49344978,"y":0.48499516}]},"confidence":0.875,"id":"f_1","latex":"F_{PX}=fB","orientation":"PAGE_UP","sourceText":"F_{PX}=\\hat{fB}\\}."},{"bbox":{"normalizedVertices":[{"x":0.4992722,"y":0.48983544},{"x":0.8573508,"y":0.48789933},{"x":0.8573508,"y":0.5324298},{"x":0.4992722,"y":0.53436595}]},"confidence":0.92578125,"id":"f_2","latex":"F=\\frac{0}{0}Q","orientation":"PAGE_UP","sourceText":"F=\\frac{0}{0}Q"},{"bbox":{"normalizedVertices":[{"x":0.53566,"y":0.53911},{"x":0.60335,"y":0.53718},{"x":0.60577,"y":0.56912},{"x":0.53808,"y":0.57106}]},"confidence":0.95,"id":"f_3","latex":"F_{AY}","orientation":"PAGE_UP","sourceText":"FAY"},{"bbox":{"normalizedVertices":[{"x":0.4978166,"y":0.57212},{"x":0.6826783,"y":0.5730881},{"x":0.68122274,"y":0.63117135},{"x":0.496361,"y":0.6302033}]},"confidence":0.875,"id":"f_4","latex":"M_A","orientation":"PAGE_UP","sourceText":"\\mathfrak{M}_{A}"},{"bbox":{"normalizedVertices":[{"x":0.3959243,"y":0.6398838},{"x":0.6622999,"y":0.625363},{"x":0.6870451,"y":0.8305905},{"x":0.4206696,"y":0.8441433}]},"confidence":0.6851301193237305,"id":"f_5","latex":"\\Sigma M_E = M - M_n - \\Gamma_E \\times G - FG - \\frac{8(26)^{2}}{2} = 0","orientation":"PAGE_UP","sourceText":"\\XiM=M-Mn-\\Gamma_{E}\\times G-FG\n-\\frac{8(26)^{2}}{2}=0"},{"bbox":{"normalizedVertices":[{"x":0.35371178,"y":0.8412391},{"x":0.6914119,"y":0.7976767},{"x":0.73362446,"y":0.945789},{"x":0.3973799,"y":0.9893514}]},"confidence":0.8346354365348816,"id":"f_6","latex":"\\Sigma M_E = M + F_{ax}G - \\frac{800^{2}}{2} - M_s - \\int 2d = 0","orientation":"PAGE_UP","sourceText":"SigmaME=M+FaxG-\\frac{800^{2}}{2}\n-Ms-\\int2d=0"},{"bbox":{"normalizedVertices":[{"x":0.3503,"y":0.80491},{"x":0.65457,"y":0.80297},{"x":0.65457,"y":0.83593},{"x":0.3503,"y":0.83787}]},"confidence":0.92,"id":"f_7","latex":"\\Sigma F_x = F - F_{AX} - F_{EX} = 0","orientation":"PAGE_UP","sourceText":"Efx= F-FAX-FEX=0"},{"bbox":{"normalizedVertices":[{"x":0.6865,"y":0.52856},{"x":0.9328,"y":0.52662},{"x":0.93377,"y":0.57308},{"x":0.68747,"y":0.57502}]},"confidence":0.87,"id":"f_8","latex":"\\Sigma M_b = M_a + F_a + F_{Ay}2a - \\frac{8ab}{2} = 0","orientation":"PAGE_UP","sourceText":"SM_{b}=M_{a}+Fa+FAy2a-\\frac{8ab}{2}\n=0"},{"bbox":{"normalizedVertices":[{"x":0.70678,"y":0.58472},{"x":0.90696,"y":0.58375},{"x":0.90745,"y":0.6128},{"x":0.70727,"y":0.61377}]},"confidence":0.93,"id":"f_9","latex":"\\Sigma F_x = F_{Bx} + F - F_{Ax} = 0","orientation":"PAGE_UP","sourceText":"2fx=fbx+F-PAx=0"},{"bbox":{"normalizedVertices":[{"x":0.68843,"y":0.61474},{"x":0.93668,"y":0.6128},{"x":0.93717,"y":0.64085},{"x":0.68892,"y":0.64278}]},"confidence":0.91,"id":"f_10","latex":"\\Sigma F_y = F_{By} + F_{Ay} - q2a = 0","orientation":"PAGE_UP","sourceText":"2py=FBy+FAY-829:0"},{"bbox":{"normalizedVertices":[{"x":0.7497,"y":0.65586},{"x":0.86017,"y":0.65489},{"x":0.86017,"y":0.67231},{"x":0.7497,"y":0.67328}]},"confidence":0.96,"id":"f_11","latex":"F_{Bx} = F_{By}","orientation":"PAGE_UP","sourceText":"FBx=fBy"},{"bbox":{"normalizedVertices":[{"x":0.46823,"y":0.80394},{"x":0.61868,"y":0.80199},{"x":0.61868,"y":0.82232},{"x":0.46823,"y":0.82426}]},"confidence":0.89,"id":"f_12","latex":"F_{EX} = -qa","orientation":"PAGE_UP","sourceText":"F_{EX}=-RG"},{"bbox":{"normalizedVertices":[{"x":0.46774,"y":0.84511},{"x":0.5828,"y":0.84318},{"x":0.58329,"y":0.86154},{"x":0.46823,"y":0.86348}]},"confidence":0.94,"id":"f_13","latex":"F_{Ey} = 0","orientation":"PAGE_UP","sourceText":"FEy=\\underline{0}"},{"bbox":{"normalizedVertices":[{"x":0.4697,"y":0.87126},{"x":0.60742,"y":0.86933},{"x":0.60839,"y":0.88769},{"x":0.47067,"y":0.88963}]},"confidence":0.93,"id":"f_14","latex":"F_{Ay} = qa","orientation":"PAGE_UP","sourceText":"Fay= \n\u00269"},{"bbox":{"normalizedVertices":[{"x":0.46677,"y":0.90809},{"x":0.63857,"y":0.90615},{"x":0.63906,"y":0.92648},{"x":0.46726,"y":0.92842}]},"confidence":0.88,"id":"f_15","latex":"F_{Ax} = -2qa","orientation":"PAGE_UP","sourceText":"F_{\\thetax}=-2\\hat{kh}"},{"bbox":{"normalizedVertices":[{"x":0.46726,"y":0.93236},{"x":0.6138,"y":0.93042},{"x":0.61429,"y":0.95075},{"x":0.46774,"y":0.95269}]},"confidence":0.92,"id":"f_16","latex":"F_{By} = qa","orientation":"PAGE_UP","sourceText":"F_{By}=\\hbarG"},{"bbox":{"normalizedVertices":[{"x":0.4702,"y":0.96008},{"x":0.58988,"y":0.95814},{"x":0.59037,"y":0.9765},{"x":0.47069,"y":0.97843}]},"confidence":0.95,"id":"f_17","latex":"F_{Bx} = qa","orientation":"PAGE_UP","sourceText":"AX=Ga"},{"bbox":{"normalizedVertices":[{"x":0.70243,"y":0.94191},{"x":0.87118,"y":0.93804},{"x":0.87263,"y":0.9642},{"x":0.70389,"y":0.96806}]},"confidence":0.93,"id":"f_18","latex":"M_A = -qa^2","orientation":"PAGE_UP","sourceText":"M_{A}=-8n^{2}"}],"grading":{"applicable":true,"stepEvaluations":[{"comment":"受力图基本思路正确，但对几何尺寸（尤其是AB段的长度）的判读有误，这将严重影响后续的力矩计算。","corrections":[{"corrected":"均布载荷q作用在AB段，长度为a，总力qa作用在距A点a/2处","original":"均布载荷q作用在AB段，长度为2a","reason":"学生错误地将AB段长度视为2a进行计算，实际根据题目示意图AB段长度为a。"},{"corrected":"集中力F对B点的力臂为a (相对于A点)","original":"集中力F对B点的力臂Fa","reason":"学生对集中力F的力臂判断有误，其作用在C点，而非B点，且应考虑其对相关点的力矩。"}],"description":"学生识别了BD为二力杆，并尝试画出了ABC和DE的受力图。但对均布载荷作用长度的理解有误，将AB段的长度错误地认为是2a而非a，且对C点集中力F的力臂也理解有误。","relatedIds":["cb_1","cb_2","cb_3"],"score":4,"stepLabel":"step_1","verdict":"partially_correct"},{"comment":"DE杆的平衡方程书写混乱且内容错误，无法据此求解正确的约束反力。","corrections":[{"corrected":"`ΣM_E = M - F_{Dy} * 2a = 0`","original":"`ΣM = M - Mn - Γ_E * G - FG - (8(26)^2)/2 = 0`","reason":"学生对方程的列写和符号使用均有误，且方程内容错误。"},{"corrected":"`ΣF_x = E_x + D_x = 0`","original":"`ΣF_x = F - F_{AX} - F_{EX} = 0`","reason":"学生将F_{AX}和F作为DE杆的力，但它们不作用在DE杆上，且F_{EX}的符号也可能错误。"}],"description":"学生尝试列出DE杆的平衡方程，但公式书写混乱，难以辨认，且内容明显错误。","relatedIds":["f_5","f_6","f_7"],"score":1,"stepLabel":"step_2","verdict":"incorrect"},{"comment":"ABC杆的平衡方程列写有较多错误，包括力矩项、力和变量表示，未能正确反映构件的受力情况。","corrections":[{"corrected":"`ΣM_A = M_A - qa*(a/2) - F_{BDx}*a + F_{BDy}*a - F*a = 0`","original":"`ΣM_b = M_a + F_a + F_{Ay}2a - 8ab/2 = 0`","reason":"学生对方程各项的力矩方向和力臂理解有误，且部分变量使用不规范或不对应实际受力。"},{"corrected":"`ΣF_x = A_x - F - F_{BDx} = 0`","original":"`ΣF_x = F_{Bx} + F - F_{Ax} = 0`","reason":"学生方程内容错误，F_{Bx}和F_{Ax}的符号及F的作用点有误。"}],"description":"学生尝试列出ABC杆的平衡方程，但方程存在多处错误，包括变量混淆、力臂错误和计算错误。","relatedIds":["f_8","f_9","f_10","f_11"],"score":1,"stepLabel":"step_3","verdict":"incorrect"},{"comment":"最终计算结果与正确答案相差甚远，错误较多，反映出计算过程中存在多处失误。","corrections":[{"corrected":"`E_x = qa/2`","original":"`F_{EX} = -qa`","reason":"计算结果的数值和方向均不正确。"},{"corrected":"`E_y = -qa/2`","original":"`F_{Ey} = 0`","reason":"计算结果的数值和方向均不正确。"},{"corrected":"`A_y = qa/2`","original":"`F_{Ay} = qa`","reason":"计算结果的数值不正确。"},{"corrected":"`A_x = 3qa/2`","original":"`F_{Ax} = -2qa`","reason":"计算结果的数值和方向均不正确。"},{"corrected":"`M_A = 2qa^2`","original":"`M_A = -qa^2`","reason":"计算结果的数值和方向均不正确。"}],"description":"基于错误的平衡方程和几何尺寸，学生计算出的A、B、E处的约束反力大部分是错误的，包括数值和方向。","relatedIds":["f_12","f_13","f_14","f_15","f_16","f_17","f_18"],"score":2,"stepLabel":"step_4","verdict":"incorrect"}]},"needsHumanReview":true,"pageNumber":2,"summary":"此页包含学生对题目的部分复述，接着是手绘的受力图、平衡方程组和计算出的约束反力。学生的解题过程显示了对构件隔离和二力杆的理解，但在具体方程列写和数值计算上存在多处错误，特别是对几何尺寸和力臂的判读有误。","suspectedOcrIssues":["The OCR for the handwritten text and mathematical formulas is highly inaccurate, with many characters misrecognized or replaced by '�'. This makes it very difficult to precisely extract the student's work.","The problem statement (cb_1) is repeated with OCR errors ('校链', '书处' instead of '铰链', 'E处')."]},{"contentBlocks":[],"documentType":"question_page","formulas":[{"bbox":{"normalizedVertices":[{"x":0.49726775,"y":0.125},{"x":0.6885246,"y":0.125},{"x":0.6885246,"y":0.1875},{"x":0.49726775,"y":0.1875}]},"confidence":0.93359375,"id":"f_1","latex":"M=qa^{2}","orientation":"PAGE_UP","sourceText":"M=qa^{2}\\leftarrow\n"},{"bbox":{"normalizedVertices":[{"x":0.38251367,"y":0.36458334},{"x":0.45355192,"y":0.36458334},{"x":0.45355192,"y":0.3984375},{"x":0.38251367,"y":0.3984375}]},"confidence":0.8229190111160278,"id":"f_2","latex":"F_D","orientation":"PAGE_UP","sourceText":"Fo\n"},{"bbox":{"normalizedVertices":[{"x":0.715847,"y":0.36197916},{"x":0.8032787,"y":0.36197916},{"x":0.8032787,"y":0.40885416},{"x":0.715847,"y":0.40885416}]},"confidence":0.90625,"id":"f_3","latex":"F_E","orientation":"PAGE_UP","sourceText":"F_{\\epsilon}\\leftrightarrow\n"},{"bbox":{"normalizedVertices":[{"x":0.29508197,"y":0.5208333},{"x":0.4398907,"y":0.5208333},{"x":0.4398907,"y":0.5572917},{"x":0.29508197,"y":0.5572917}]},"confidence":0.9385342001914978,"id":"f_4","latex":"F=qa","orientation":"PAGE_UP","sourceText":"F= qa\n"},{"bbox":{"normalizedVertices":[{"x":0.74863386,"y":0.6848958},{"x":0.8469945,"y":0.6848958},{"x":0.8469945,"y":0.7890625},{"x":0.74863386,"y":0.7890625}]},"confidence":0.9517328143119812,"id":"f_5","latex":"M_A","orientation":"PAGE_UP","sourceText":"M_{A^{\\leftrightarrow}}\nA\n"},{"bbox":{"normalizedVertices":[{"x":0.8715847,"y":0.7890625},{"x":0.931694,"y":0.7890625},{"x":0.931694,"y":0.8255208},{"x":0.8715847,"y":0.8255208}]},"confidence":0.8827663064002991,"id":"f_6","latex":"F_{Ax}","orientation":"PAGE_UP","sourceText":"FAX\nAx\n"},{"bbox":{"normalizedVertices":[{"x":0.215847,"y":0.9244792},{"x":0.28142077,"y":0.9244792},{"x":0.28142077,"y":0.9739583},{"x":0.215847,"y":0.9739583}]},"confidence":0.91015625,"id":"f_7","latex":"F_B","orientation":"PAGE_UP","sourceText":"F_{s^{\\alpha}}\n"},{"bbox":{"normalizedVertices":[{"x":0.70765024,"y":0.921875},{"x":0.76775956,"y":0.921875},{"x":0.76775956,"y":0.9739583},{"x":0.70765024,"y":0.9739583}]},"confidence":1,"id":"f_8","latex":"F_{Ay}","orientation":"PAGE_UP","sourceText":"F_{Ay}\n"}],"grading":{"applicable":false,"stepEvaluations":[]},"needsHumanReview":false,"pageNumber":3,"summary":"此页提供了清晰的杆件DE和折杆ABC的受力图（FBDs），图中明确标示了所有的外力、约束反力、力偶和均布载荷，以及相关的尺寸和标签。这有助于理解结构和分析受力情况。","suspectedOcrIssues":[]}]}}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"好的，我已经批改了你的作业。以下是批改结果：\n\n### 整体得分\n\n**2.5 / 10**\n\n### 总评\n\n学生的解题思路在受力分析和识别二力杆方面"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"有初步的正确性，但对几何尺寸（如均布载荷作用长度）和力臂的理解存在错误。平衡方程的列写非常混乱且多处有误，导致最终的约束反力计算结果"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"大多不正确。建议学生加强对基本力学原理、几何尺寸判读和方程列写规范的练习。\n\n### 每页答题情况分析\n\n#### 第 2 页 (answer.png) - 答题过程"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"\n\n本页是你的主要答题内容。\n\n**步骤 1: 受力分析与二力杆识别**\n*   **评分**: 4/10\n*   **评语**: 受力图基本思路"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"正确，但对几何尺寸（尤其是AB段的长度）的判读有误，这将严重影响后续的力矩计算。\n*   **错误更正**:\n    *   **错在哪**: 均布载荷 $"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"q$ 作用在AB段，长度为 $2a$。\n    *   **正确答案**: 均布载荷 $q$ 作用在AB段，长度为 $a$，总力 $qa$ 作用在距"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"A点 $a/2$ 处。\n    *   **原因**: 学生错误地将AB段长度视为 $2a$ 进行计算，实际根据题目示意图AB段长度为 $a$。\n    *   **"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"错在哪**: 集中力 $F$ 对B点的力臂 $Fa$。\n    *   **正确答案**: 集中力 $F$ 对B点的力臂为 $a$ (相对于A点)。\n    "}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"*   **原因**: 学生对集中力 $F$ 的力臂判断有误，其作用在C点，而非B点，且应考虑其对相关点的力矩。\n\n**步骤 2: DE杆平衡"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"方程**\n*   **评分**: 1/10\n*   **评语**: DE杆的平衡方程书写混乱且内容错误，无法据此求解正确的约束反力。\n*   **错误更正**:\n"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"    *   **错在哪**: `ΣM = M - Mn - Γ_E * G - FG - (8(26)^2)/2 = 0`\n    *   **正确答案**: `ΣM_"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"E = M - F_{Dy} * 2a = 0`\n    *   **原因**: 学生对方程的列写和符号使用均有误，且方程内容错误。\n    *   **错在哪"}
+
+      : ping
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"**: `ΣF_x = F - F_{AX} - F_{EX} = 0`\n    *   **正确答案**: `ΣF_x = E_x + D_x = 0`\n"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"    *   **原因**: 学生将 $F_{AX}$ 和 $F$ 作为DE杆的力，但它们不作用在DE杆上，且 $F_{EX}$ 的符号也可能错误。\n\n**步骤 3"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":": ABC杆平衡方程**\n*   **评分**: 1/10\n*   **评语**: ABC杆的平衡方程列写有较多错误，包括力矩项、力和变量表示，未能正确反映"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"构件的受力情况。\n*   **错误更正**:\n    *   **错在哪**: `ΣM_b = M_a + F_a + F_{Ay}2a - 8ab/"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"2 = 0`\n    *   **正确答案**: `ΣM_A = M_A - qa*(a/2) - F_{BDx}*a + F_{BDy}*a - F*"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"a = 0`\n    *   **原因**: 学生对方程各项的力矩方向和力臂理解有误，且部分变量使用不规范或不对应实际受力。\n    *   **错在哪**:"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":" `ΣF_x = F_{Bx} + F - F_{Ax} = 0`\n    *   **正确答案**: `ΣF_x = A_x - F - F_{BDx} = "}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"0`\n    *   **原因**: 学生方程内容错误，$F_{Bx}$ 和 $F_{Ax}$ 的符号及 $F$ 的作用点有误。\n\n**步骤 4: 约束反力计算结果"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"**\n*   **评分**: 2/10\n*   **评语**: 最终计算结果与正确答案相差甚远，错误较多，反映出计算过程中存在多处失误。\n*   "}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"**错误更正**:\n    *   **错在哪**: $F_{EX} = -qa$\n    *   **正确答案**: $E_x = qa/2$\n    *   **原因**: 计算结果的数值"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"和方向均不正确。\n    *   **错在哪**: $F_{Ey} = 0$\n    *   **正确答案**: $E_y = -qa/2$\n    *   **原因**:"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":" 计算结果的数值和方向均不正确。\n    *   **错在哪**: $F_{Ay} = qa$\n    *   **正确答案**: $A_y = qa/2$\n    *   **"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"原因**: 计算结果的数值不正确。\n    *   **错在哪**: $F_{Ax} = -2qa$\n    *   **正确答案**: $A_x = 3qa/2$\n    "}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"*   **原因**: 计算结果的数值和方向均不正确。\n    *   **错在哪**: $M_A = -qa^2$\n    *   **正确答案**: $M_A = 2"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"qa^2$\n    *   **原因**: 计算结果的数值和方向均不正确。\n\n---\n\n**建议**:\n1.  **仔细审题，明确几何尺寸**: 在受力分析之前，务必仔细阅读"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"题目，并参照示意图准确判断各杆件的长度、载荷的作用位置和大小。\n2.  **规范受力图**: 绘制清晰的隔离体受力图，正确标示所有已知和未"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"知的力及力偶的方向和作用点。\n3.  **精确列写平衡方程**: 严格按照平衡方程的规则（`ΣF_x = 0`，`ΣF_y = 0"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"`，`ΣM = 0`）列写，注意力的方向、力臂的符号以及力矩的方向。避免混淆变量或将不属于该隔离体的力代入方程。\n4.  **逐步求解**: 在解"}
+
+      data: {"type":"text_delta","message_id":"msg_eb8d3d88-99c","delta":"联立方程时，要清晰地写出每一步的求解过程，减少计算错误。\n\n希望这些详细的批改和建议能帮助你更好地理解和掌握相关知识。"}
+
+      data: {"type":"text_complete","message_id":"msg_eb8d3d88-99c","text":"好的，我已经批改了你的作业。以下是批改结果：\n\n### 整体得分\n\n**2.5 / 10**\n\n### 总评\n\n学生的解题思路在受力分析和识别二力杆方面有初步的正确性，但对几何尺寸（如均布载荷作用长度）和力臂的理解存在错误。平衡方程的列写非常混乱且多处有误，导致最终的约束反力计算结果大多不正确。建议学生加强对基本力学原理、几何尺寸判读和方程列写规范的练习。\n\n### 每页答题情况分析\n\n#### 第 2 页 (answer.png) - 答题过程\n\n本页是你的主要答题内容。\n\n**步骤 1: 受力分析与二力杆识别**\n*   **评分**: 4/10\n*   **评语**: 受力图基本思路正确，但对几何尺寸（尤其是AB段的长度）的判读有误，这将严重影响后续的力矩计算。\n*   **错误更正**:\n    *   **错在哪**: 均布载荷 $q$ 作用在AB段，长度为 $2a$。\n    *   **正确答案**: 均布载荷 $q$ 作用在AB段，长度为 $a$，总力 $qa$ 作用在距A点 $a/2$ 处。\n    *   **原因**: 学生错误地将AB段长度视为 $2a$ 进行计算，实际根据题目示意图AB段长度为 $a$。\n    *   **错在哪**: 集中力 $F$ 对B点的力臂 $Fa$。\n    *   **正确答案**: 集中力 $F$ 对B点的力臂为 $a$ (相对于A点)。\n    *   **原因**: 学生对集中力 $F$ 的力臂判断有误，其作用在C点，而非B点，且应考虑其对相关点的力矩。\n\n**步骤 2: DE杆平衡方程**\n*   **评分**: 1/10\n*   **评语**: DE杆的平衡方程书写混乱且内容错误，无法据此求解正确的约束反力。\n*   **错误更正**:\n    *   **错在哪**: `ΣM = M - Mn - Γ_E * G - FG - (8(26)^2)/2 = 0`\n    *   **正确答案**: `ΣM_E = M - F_{Dy} * 2a = 0`\n    *   **原因**: 学生对方程的列写和符号使用均有误，且方程内容错误。\n    *   **错在哪**: `ΣF_x = F - F_{AX} - F_{EX} = 0`\n    *   **正确答案**: `ΣF_x = E_x + D_x = 0`\n    *   **原因**: 学生将 $F_{AX}$ 和 $F$ 作为DE杆的力，但它们不作用在DE杆上，且 $F_{EX}$ 的符号也可能错误。\n\n**步骤 3: ABC杆平衡方程**\n*   **评分**: 1/10\n*   **评语**: ABC杆的平衡方程列写有较多错误，包括力矩项、力和变量表示，未能正确反映构件的受力情况。\n*   **错误更正**:\n    *   **错在哪**: `ΣM_b = M_a + F_a + F_{Ay}2a - 8ab/2 = 0`\n    *   **正确答案**: `ΣM_A = M_A - qa*(a/2) - F_{BDx}*a + F_{BDy}*a - F*a = 0`\n    *   **原因**: 学生对方程各项的力矩方向和力臂理解有误，且部分变量使用不规范或不对应实际受力。\n    *   **错在哪**: `ΣF_x = F_{Bx} + F - F_{Ax} = 0`\n    *   **正确答案**: `ΣF_x = A_x - F - F_{BDx} = 0`\n    *   **原因**: 学生方程内容错误，$F_{Bx}$ 和 $F_{Ax}$ 的符号及 $F$ 的作用点有误。\n\n**步骤 4: 约束反力计算结果**\n*   **评分**: 2/10\n*   **评语**: 最终计算结果与正确答案相差甚远，错误较多，反映出计算过程中存在多处失误。\n*   **错误更正**:\n    *   **错在哪**: $F_{EX} = -qa$\n    *   **正确答案**: $E_x = qa/2$\n    *   **原因**: 计算结果的数值和方向均不正确。\n    *   **错在哪**: $F_{Ey} = 0$\n    *   **正确答案**: $E_y = -qa/2$\n    *   **原因**: 计算结果的数值和方向均不正确。\n    *   **错在哪**: $F_{Ay} = qa$\n    *   **正确答案**: $A_y = qa/2$\n    *   **原因**: 计算结果的数值不正确。\n    *   **错在哪**: $F_{Ax} = -2qa$\n    *   **正确答案**: $A_x = 3qa/2$\n    *   **原因**: 计算结果的数值和方向均不正确。\n    *   **错在哪**: $M_A = -qa^2$\n    *   **正确答案**: $M_A = 2qa^2$\n    *   **原因**: 计算结果的数值和方向均不正确。\n\n---\n\n**建议**:\n1.  **仔细审题，明确几何尺寸**: 在受力分析之前，务必仔细阅读题目，并参照示意图准确判断各杆件的长度、载荷的作用位置和大小。\n2.  **规范受力图**: 绘制清晰的隔离体受力图，正确标示所有已知和未知的力及力偶的方向和作用点。\n3.  **精确列写平衡方程**: 严格按照平衡方程的规则（`ΣF_x = 0`，`ΣF_y = 0`，`ΣM = 0`）列写，注意力的方向、力臂的符号以及力矩的方向。避免混淆变量或将不属于该隔离体的力代入方程。\n4.  **逐步求解**: 在解联立方程时，要清晰地写出每一步的求解过程，减少计算错误。\n\n希望这些详细的批改和建议能帮助你更好地理解和掌握相关知识。"}
+
+      data: {"type":"message_done","message_id":"msg_eb8d3d88-99c","finish_reason":"stop"}
+
+      data: {"type":"conversation_title","conversation":{"id":"aadae9f7-11e1-454e-8470-fdb76d250339","title":"你可以批改一下这个作业吗","created_at":"2026-05-19T10:00:01Z","updated_at":"2026-05-19T18:02:25+08:00"}}
+
+order: 1882734836899442

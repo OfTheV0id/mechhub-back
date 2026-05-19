@@ -9,18 +9,77 @@
 
 ---
 
-## Claude 轮 9 — 2026-05-18 — 消除冗余 env 变量
+## Claude 轮 11 — 2026-05-19 — 图片传输从磁盘改内存缓存,消除 LLM 路径幻觉
+
+### ⚠️ 破坏性变更
+
+1. **工具参数 `image_paths` → `image_indices`**
+   - `ocr_images_cached` 和 `grade_with_ocr` 现在接受 `image_indices: [0, 1, 2]` 而非文件路径
+   - LLM 不再需要抄写完整文件路径,提示中只显示简短索引(如 `[0] 题目01.png`),根治 UUID 路径幻觉
+2. **图片数据走内存缓存,不再落盘**
+   - 新增 [internal/llm/tools/image_cache.go](internal/llm/tools/image_cache.go):`StoreSessionImages` / `GetSessionImages` / `DeleteSessionImages`
+   - `buildUserContent` 不再写临时文件,改为存入内存缓存;`ProcessImages` / `callGeminiGrader` 直接读 `[]CachedImage` bytes
+   - 删除 `cleanupTempFiles`、`safeFilename` 及 `os` import
+   - `CacheKey` 简化为索引排序拼接(`0:1:2`),不再依赖文件 UUID 前缀
+3. **`StreamOptions` 新增 `StateDelta`**,启动时注入 `_solochat_session` 到 session state,工具通过它查找图片缓存
 
 ### 杂项
 
-1. **删除 `BACKEND_BASE_URL` env**
-   - `avatar_url` / `attachment.url` 改为代码内 `"http://localhost:" + PORT + "/api/..."` 拼接
-   - `config.go` 中 `AppConfig.BackendBaseURL` 字段移除
+- 补全 `.env` / `.env.example` 的 `OCR_IMAGELESS_MODE` / `OCR_ENABLE_IMAGE_QUALITY` / `OCR_ENABLE_MATH_OCR` 三个配置项(之前缺失导致公式识别质量差)
+- 更新 HANDOFF.md 反映上述变更
 
-2. **删除 `GOOGLE_REDIRECT_URL` env**
-   - Google OAuth redirect URL 改为代码内 `"http://localhost:" + PORT + "/api/auth/google/callback"` 拼接
+---
+
+## Claude 轮 10 — 2026-05-19 — SSE 帧去重 + 回归 OCR/批改两步 SOP
+
+### ⚠️ 破坏性变更
+
+1. **`grade_submission` 工具改名为 `grade_with_ocr`,且不再内部 OCR**
+   - 改名:[internal/llm/tools/grader.go](internal/llm/tools/grader.go) 注册名 `grade_submission` → `grade_with_ocr`
+   - 行为收紧:工具内部**不再**回退 `ProcessImages` 兜底 OCR;OCR 缓存未命中直接返回 error,提示 "请先用相同的 image_paths 调用 ocr_images_cached"
+   - 系统提示词([internal/llm/prompts/prompts.go](internal/llm/prompts/prompts.go))同步改成严格两步 SOP:`ocr_images_cached(image_paths)` → `grade_with_ocr(image_paths)`,两次 image_paths 必须完全一致(与 `mechhub-agent/mechhub_agent/prompts.py::ROOT_SYSTEM_PROMPT` 对齐)
+   - 前端/调用方:不需要改 HTTP 路径或请求体;但流里现在会观察到 OCR + grade 两段 `tool_call_start` / `tool_result` 帧,需要正确渲染两段 tool 状态
+
+### 修复
+
+1. **新建 session 的首条消息 `stale session error`**([internal/llm/sse.go](internal/llm/sse.go))
+   - 现象:新会话发的第 1 条消息触发 `failed to append event to sessionService: stale session error: last update time from request (...) is older than in database (...)`,差值正好 1 µs
+   - 根因:ADK Go v1.2.0 `runner.Run` 在 session 不存在时走 auto-create 分支,内存里的 `updatedAt = time.Now()` 带纳秒;MySQL `DATETIME(6)` 默认四舍五入到微秒,而 Go `UnixMicro()` 截断 → DB 比内存值大 1 µs,首条 `AppendEvent` 乐观锁误报
+   - 修复:在 `StreamChat` 开头 `Get-or-Create` 一次 session([internal/llm/sse.go::ensureSession](internal/llm/sse.go)),让 runner.Run 内部走 Get 分支(返回的 session.updatedAt 已是 DB 截断后的值),绕过 ADK 的 1 µs bug。**注意**:首次尝试过 DSN 参数 `time_truncate_fractional=true`,但要求 MySQL ≥ 8.0.26;低版本会启动失败(`Unknown system variable`),所以放弃 DSN 方案改走应用层
+2. **SSE 帧重复**([internal/llm/sse.go](internal/llm/sse.go))
+   - 此前同一次工具调用会发出**两次** `tool_call_start`;最后一条 `text_delta` 的 `delta` 字段会塞**全文**;`text_complete` 的 `text` 字段被**拼接两次**
+   - 根因:ADK Go 在 `StreamingModeSSE` 下对纯文本先 yield 若干 `Partial=true` 增量 event,再 yield 一个 `Partial=false` 的 aggregated event 回灌整段文本;旧代码两种 event 一视同仁,partial 阶段已累积过的内容在 aggregated event 又被处理了一遍。函数调用 event 偶尔也会被 ADK 重发
+   - 修复:`emitEvent` 对 text part 跳过 `Partial=false` 事件(只用 partial 累积);对 function_call / function_response 按 `tool_use_id` 去重
+
+### 杂项
+
+1. **Postman example 同步**
+   - [postman/.../Send message stream-1.example.yaml](postman/collections/MechHub Backend/solochat/messages/.resources/Send message stream.resources/examples/Send message stream-1.example.yaml):OCR 场景示例去掉了重复的 `tool_call_start` 与重复的 `text_delta` / `text_complete`,与修复后的实际流一致
+   - [postman/.../Send message stream.example.yaml](postman/collections/MechHub Backend/solochat/messages/.resources/Send message stream.resources/examples/Send message stream.example.yaml):工具介绍场景里 `grade_submission` → `grade_with_ocr`,描述加上"前置必须先调 ocr_images_cached";描述里补充"批改两步流程"的典型帧序列
+
+---
+
+## Claude 轮 9 — 2026-05-18 — 简化 env 配置
+
+### ⚠️ 破坏性变更
+
+1. **删除 `GOOGLE_REDIRECT_URL` env**
+   - Google OAuth redirect URL 改为 `BackendBaseURL + "/api/auth/google/callback"` 拼接
    - `config.go` 中 `GoogleConfig.RedirectURL` 字段移除
-   - `oauth.NewGoogle` 签名变更为 `NewGoogle(cfg, port)`
+
+### 杂项
+
+1. **`BACKEND_BASE_URL` 改为可选**
+   - 默认 `http://localhost:<PORT>`,开发无需设置
+   - 生产设 `BACKEND_BASE_URL=https://mechhub.oftheloneliness.cn` 即可
+   - `avatar_url` / `attachment.url` / Google callback 统一从 `BackendBaseURL` 拼
+
+2. **Postman `Upload attachments` 补全 body 段**
+   - 添加 `formdata` body,字段 key `files`
+   - 描述更新为 Go/ADK,删过时的 Python 引用
+
+3. **`allowedMimeKind` 增加 `image/jpg`**
+   - 兼容部分客户端发出的非标准 MIME
 
 ---
 

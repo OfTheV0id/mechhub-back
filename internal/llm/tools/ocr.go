@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"regexp"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -21,7 +21,7 @@ import (
 
 // OCRArgs is the schema the LLM sees for ocr_images_cached.
 type OCRArgs struct {
-	ImagePaths []string `json:"image_paths" description:"图片本地路径列表,按页码顺序传入"`
+	ImageIndices []int `json:"image_indices" description:"图片索引列表,从本轮上传图片提示中获取(例如 [0, 1, 2])"`
 }
 
 // OCRResult 返给 LLM 的精简摘要;完整 OCR JSON 存到 session.state["ocr_cache"]。
@@ -87,35 +87,50 @@ type OCRDefect struct {
 func NewOCRTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "ocr_images_cached",
-		Description: "对图片做 OCR 文字识别。完整 OCR JSON 缓存到 session state['ocr_cache'][cache_key];返回值仅是精简摘要(image_count / page_count / text_chars / has_formulas / preview / cached_to_state)。grade_submission 会按需要复用同一份缓存。",
+		Description: "使用 Google Document AI 对图片做 OCR 文字识别。完整 OCR JSON 缓存到 session state['ocr_cache'];返回值仅是精简摘要(image_count / page_count / text_chars / has_formulas / preview / cached_to_state)。后续 grade_with_ocr 会使用同一份缓存。",
 	}, runOCR)
 }
 
 func runOCR(tctx tool.Context, args OCRArgs) (OCRResult, error) {
-	if len(args.ImagePaths) == 0 {
-		return OCRResult{}, fmt.Errorf("image_paths is empty")
+	if len(args.ImageIndices) == 0 {
+		return OCRResult{}, fmt.Errorf("image_indices is empty")
 	}
 
 	state := tctx.State()
-	cacheKey := CacheKey(args.ImagePaths)
 
-	if hit, ok := ReadCachedOCR(state, cacheKey); ok {
-		return summarize(args.ImagePaths, hit), nil
+	sid, err := state.Get("_solochat_session")
+	if err != nil {
+		return OCRResult{}, fmt.Errorf("session not initialized: %w", err)
+	}
+	sessionID, ok := sid.(string)
+	if !ok {
+		return OCRResult{}, fmt.Errorf("invalid session id type")
 	}
 
-	doc, err := ProcessImages(tctx, args.ImagePaths)
+	imgs, err := GetSessionImages(sessionID, args.ImageIndices)
 	if err != nil {
 		return OCRResult{}, err
 	}
+
+	cacheKey := cacheKeyFromIndices(args.ImageIndices)
+
+	if hit, ok := ReadCachedOCR(state, cacheKey); ok {
+		return summarize(len(imgs), hit), nil
+	}
+
+	doc, err := ProcessImages(tctx, imgs)
+	if err != nil {
+		return OCRResult{}, err
+	}
+	dumpOCRTrace(sessionID, cacheKey, doc)
 	if err := WriteCachedOCR(state, cacheKey, doc); err != nil {
 		return OCRResult{}, err
 	}
-	return summarize(args.ImagePaths, doc), nil
+	return summarize(len(imgs), doc), nil
 }
 
-// ProcessImages 是 OCR 核心实现,直接对外暴露(grader 工具内部会调用,
-// 不走 LLM)。结果不写 session.state —— 调用方决定是否落缓存。
-func ProcessImages(ctx context.Context, imagePaths []string) (*OCRDocument, error) {
+// ProcessImages 是 OCR 核心实现,接受内存中的图片数据,调 Document AI。
+func ProcessImages(ctx context.Context, images []CachedImage) (*OCRDocument, error) {
 	client, err := ocrClient(ctx)
 	if err != nil {
 		return nil, err
@@ -128,23 +143,18 @@ func ProcessImages(ctx context.Context, imagePaths []string) (*OCRDocument, erro
 	}
 	name := fmt.Sprintf("projects/%s/locations/%s/processors/%s", project, location, processor)
 
-	merged := &OCRDocument{Images: append([]string(nil), imagePaths...)}
+	merged := &OCRDocument{Images: make([]string, len(images))}
+	for i, img := range images {
+		merged.Images[i] = img.OrigName
+	}
 	var allText []string
 	pageCounter := 0
 
-	for _, p := range imagePaths {
-		content, err := os.ReadFile(p)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", p, err)
-		}
-		mime, err := mimeForPath(p)
-		if err != nil {
-			return nil, err
-		}
+	for _, img := range images {
 		req := &documentaipb.ProcessRequest{
 			Name: name,
 			Source: &documentaipb.ProcessRequest_RawDocument{
-				RawDocument: &documentaipb.RawDocument{Content: content, MimeType: mime},
+				RawDocument: &documentaipb.RawDocument{Content: img.Data, MimeType: img.MimeType},
 			},
 			ImagelessMode: envBool("OCR_IMAGELESS_MODE"),
 			ProcessOptions: &documentaipb.ProcessOptions{
@@ -163,7 +173,7 @@ func ProcessImages(ctx context.Context, imagePaths []string) (*OCRDocument, erro
 		}
 		resp, err := client.ProcessDocument(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("document ai process %s: %w", p, err)
+			return nil, fmt.Errorf("document ai process: %w", err)
 		}
 		compact := compactOCR(resp.GetDocument())
 		allText = append(allText, compact.Text)
@@ -258,23 +268,14 @@ func simplifyPoly(poly *documentaipb.BoundingPoly) *OCRBoundPoly {
 	return out
 }
 
-var fileIDPrefixRE = regexp.MustCompile(`^([0-9a-f-]{36}|[0-9a-f]{24})-`)
-
-// CacheKey 用 file_id 反查路径前缀作 cache key。Round 6 引入的稳定 key
-// 模式 —— 文件名前缀 = uploaded_files.id(UUID 或旧 ObjectID)。解出来才
-// 能跨重启 / 跨 conversation 命中。解不出(curl 测试场景)才退化用绝对路径。
-func CacheKey(paths []string) string {
-	keys := make([]string, 0, len(paths))
-	for _, p := range paths {
-		name := filepath.Base(p)
-		if m := fileIDPrefixRE.FindStringSubmatch(name); len(m) > 1 {
-			keys = append(keys, m[1])
-		} else {
-			keys = append(keys, p)
-		}
+// cacheKeyFromIndices 用排序后的索引列表作 OCR 缓存 key,简短且跨重启稳定。
+func cacheKeyFromIndices(indices []int) string {
+	s := make([]string, len(indices))
+	for i, idx := range indices {
+		s[i] = strconv.Itoa(idx)
 	}
-	sort.Strings(keys)
-	return strings.Join(keys, ":")
+	sort.Strings(s)
+	return strings.Join(s, ":")
 }
 
 // ReadCachedOCR / WriteCachedOCR 通过 JSON 序列化 roundtrip,绕开 GORM
@@ -314,7 +315,7 @@ func WriteCachedOCR(state session.State, key string, doc *OCRDocument) error {
 	return state.Set("ocr_cache", m)
 }
 
-func summarize(imagePaths []string, doc *OCRDocument) OCRResult {
+func summarize(imageCount int, doc *OCRDocument) OCRResult {
 	hasFormulas := false
 	for _, p := range doc.Pages {
 		if len(p.VisualElements) > 0 {
@@ -328,25 +329,10 @@ func summarize(imagePaths []string, doc *OCRDocument) OCRResult {
 		preview = preview[:previewLen]
 	}
 	return OCRResult{
-		OK: true, ImageCount: len(imagePaths), PageCount: len(doc.Pages),
+		OK: true, ImageCount: imageCount, PageCount: len(doc.Pages),
 		TextChars: len(doc.Text), HasFormulas: hasFormulas,
 		Preview: preview, CachedToState: true,
 	}
-}
-
-func mimeForPath(p string) (string, error) {
-	ext := strings.ToLower(filepath.Ext(p))
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg", nil
-	case ".png":
-		return "image/png", nil
-	case ".webp":
-		return "image/webp", nil
-	case ".pdf":
-		return "application/pdf", nil
-	}
-	return "", fmt.Errorf("unsupported image type for OCR: %s", ext)
 }
 
 func envBool(k string) bool {
@@ -357,6 +343,15 @@ var (
 	clientMu sync.Mutex
 	cachedDP *documentai.DocumentProcessorClient
 )
+
+// dumpOCRTrace 把完整 OCR 结果写成 JSON 文件到临时目录,方便调试。
+func dumpOCRTrace(sessionID, cacheKey string, doc *OCRDocument) {
+	dir := "tmp"
+	_ = os.MkdirAll(dir, 0o755)
+	name := fmt.Sprintf("%s_%s.json", sessionID[:8], cacheKey)
+	b, _ := json.MarshalIndent(doc, "", "  ")
+	_ = os.WriteFile(filepath.Join(dir, name), b, 0o644)
+}
 
 func ocrClient(ctx context.Context) (*documentai.DocumentProcessorClient, error) {
 	clientMu.Lock()

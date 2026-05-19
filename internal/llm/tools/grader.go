@@ -15,45 +15,51 @@ import (
 	"mechhub-back/internal/llm/schemas"
 )
 
-// GraderArgs is the schema the LLM sees for grade_submission.
+// GraderArgs is the schema the LLM sees for grade_with_ocr.
 type GraderArgs struct {
-	ImagePaths []string `json:"image_paths" description:"作业图片本地路径列表,按页码顺序"`
+	ImageIndices []int `json:"image_indices" description:"图片索引列表,必须与之前 ocr_images_cached 调用的 image_indices 完全一致(例如 [0, 1, 2])"`
 }
 
-// NewGraderTool 注册 grade_submission 工具。工具内部先取/算 OCR 结果,
-// 然后直接调 Gemini structured output 生成 GradingOutput。
+// NewGraderTool 注册 grade_with_ocr 工具。**前置条件**:必须先对同一批
+// image_indices 调用过 ocr_images_cached,否则直接返回 error 让 LLM 自己补一步。
+// 与 mechhub-agent Python 版的两步 SOP 对齐。
 func NewGraderTool() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
-		Name:        "grade_submission",
-		Description: "对一批作业图片做完整批改,返回结构化 GradingOutput(整体分 + 每页步骤分析 + 错误更正)。工具内部按需要调用 OCR(复用 session 缓存),你不必先手动调 ocr_images_cached。",
+		Name:        "grade_with_ocr",
+		Description: "对一批作业图片做完整批改,返回结构化 GradingOutput(整体分 + 每页步骤分析 + 错误更正)。**前置条件**:必须先对同一批 image_indices 调用过 ocr_images_cached(本工具只读 session 中的 OCR 缓存,不会自己 OCR);未命中缓存会返回 error,届时请补一次 ocr_images_cached 再重试。",
 	}, runGrade)
 }
 
 func runGrade(tctx tool.Context, args GraderArgs) (schemas.GradingOutput, error) {
-	if len(args.ImagePaths) == 0 {
-		return schemas.GradingOutput{}, fmt.Errorf("image_paths is empty")
+	if len(args.ImageIndices) == 0 {
+		return schemas.GradingOutput{}, fmt.Errorf("image_indices is empty")
 	}
 
 	state := tctx.State()
-	cacheKey := CacheKey(args.ImagePaths)
-	var ocr *OCRDocument
-	if hit, ok := ReadCachedOCR(state, cacheKey); ok {
-		ocr = hit
-	} else {
-		doc, err := ProcessImages(tctx, args.ImagePaths)
-		if err != nil {
-			return schemas.GradingOutput{}, fmt.Errorf("ocr: %w", err)
-		}
-		if err := WriteCachedOCR(state, cacheKey, doc); err != nil {
-			return schemas.GradingOutput{}, fmt.Errorf("ocr cache write: %w", err)
-		}
-		ocr = doc
+
+	sid, err := state.Get("_solochat_session")
+	if err != nil {
+		return schemas.GradingOutput{}, fmt.Errorf("session not initialized: %w", err)
+	}
+	sessionID, ok := sid.(string)
+	if !ok {
+		return schemas.GradingOutput{}, fmt.Errorf("invalid session id type")
 	}
 
-	return callGeminiGrader(tctx, args.ImagePaths, ocr)
+	imgs, err := GetSessionImages(sessionID, args.ImageIndices)
+	if err != nil {
+		return schemas.GradingOutput{}, err
+	}
+
+	cacheKey := cacheKeyFromIndices(args.ImageIndices)
+	hit, ok := ReadCachedOCR(state, cacheKey)
+	if !ok {
+		return schemas.GradingOutput{}, fmt.Errorf("OCR 缓存未命中:请先用相同的 image_indices 调用 ocr_images_cached,再调本工具")
+	}
+	return callGeminiGrader(tctx, imgs, hit)
 }
 
-func callGeminiGrader(ctx context.Context, imagePaths []string, ocr *OCRDocument) (schemas.GradingOutput, error) {
+func callGeminiGrader(ctx context.Context, images []CachedImage, ocr *OCRDocument) (schemas.GradingOutput, error) {
 	client, err := geminiClient(ctx)
 	if err != nil {
 		return schemas.GradingOutput{}, err
@@ -66,19 +72,11 @@ func callGeminiGrader(ctx context.Context, imagePaths []string, ocr *OCRDocument
 		model = "gemini-2.5-flash"
 	}
 
-	parts := make([]*genai.Part, 0, len(imagePaths)+1)
-	for _, p := range imagePaths {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return schemas.GradingOutput{}, fmt.Errorf("read %s: %w", p, err)
-		}
-		mime, err := mimeForPath(p)
-		if err != nil {
-			return schemas.GradingOutput{}, err
-		}
-		parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}})
+	parts := make([]*genai.Part, 0, len(images)+1)
+	for _, img := range images {
+		parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: img.Data, MIMEType: img.MimeType}})
 	}
-	parts = append(parts, &genai.Part{Text: prompts.BuildGradingPrompt(ocr, len(imagePaths))})
+	parts = append(parts, &genai.Part{Text: prompts.BuildGradingPrompt(ocr, len(images))})
 
 	resp, err := client.Models.GenerateContent(ctx, model, []*genai.Content{
 		{Role: "user", Parts: parts},

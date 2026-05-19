@@ -5,9 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	stdmime "mime"
 	"mime/multipart"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/llm"
+	"mechhub-back/internal/llm/tools"
 	"mechhub-back/internal/storage"
 )
 
@@ -63,6 +65,7 @@ func streamKey(userID, conversationID string) string {
 var allowedMimeKind = map[string]string{
 	"image/png":       FileKindImage,
 	"image/jpeg":      FileKindImage,
+	"image/jpg":       FileKindImage,
 	"image/webp":      FileKindImage,
 	"image/gif":       FileKindImage,
 	"text/plain":      FileKindText,
@@ -72,7 +75,7 @@ var allowedMimeKind = map[string]string{
 
 var (
 	imageMimes = map[string]bool{
-		"image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true,
+		"image/png": true, "image/jpeg": true, "image/jpg": true, "image/webp": true, "image/gif": true,
 	}
 	textMimes = map[string]bool{
 		"text/plain": true, "text/markdown": true,
@@ -90,10 +93,7 @@ func (s *Service) UploadAttachments(ctx context.Context, ownerID string, files [
 		if fh.Size > s.cfg.Solochat.MaxFileSize {
 			return nil, ErrFileTooLarge
 		}
-		mime := fh.Header.Get("Content-Type")
-		if mime == "" {
-			mime = "application/octet-stream"
-		}
+		mime := resolveMime(fh)
 		kind, ok := allowedMimeKind[mime]
 		if !ok {
 			return nil, ErrFileTypeNotAllowed
@@ -153,7 +153,7 @@ func (s *Service) OpenAttachment(ctx context.Context, id, ownerID string) (*Uplo
 
 // AttachmentURL 拼出后端 stream-through URL。
 func (s *Service) AttachmentURL(fileID string) string {
-	return "http://localhost:" + s.cfg.Port + "/api/solochat/attachments/" + fileID
+	return s.cfg.App.BackendBaseURL + "/api/solochat/attachments/" + fileID
 }
 
 func (s *Service) ToAttachmentDTO(f *UploadedFile) AttachmentDTO {
@@ -173,6 +173,43 @@ func randomHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// resolveMime 从 multipart part 的 Content-Type 头读 MIME,剥参数;
+// 头缺失或是 application/octet-stream 时,根据文件扩展名兜底。
+// 这是因为部分 Postman / curl 调用不写 part-level Content-Type。
+func resolveMime(fh *multipart.FileHeader) string {
+	raw := strings.TrimSpace(fh.Header.Get("Content-Type"))
+	if raw != "" {
+		if media, _, err := stdmime.ParseMediaType(raw); err == nil {
+			raw = media
+		}
+	}
+	if raw == "" || raw == "application/octet-stream" {
+		return mimeFromExt(filepath.Ext(fh.Filename))
+	}
+	return raw
+}
+
+func mimeFromExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".pdf":
+		return "application/pdf"
+	case ".txt":
+		return "text/plain"
+	case ".md", ".markdown":
+		return "text/markdown"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) CreateConversation(ctx context.Context, userID, title string) (*Conversation, error) {
@@ -324,13 +361,13 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	}
 	w.write(StreamEvent{Type: StreamUserInput, Message: &userPending})
 
-	// 组装 user content + 落盘临时图片(供 OCR / grading 工具反查 file_id)
-	userContent, tempPaths, err := s.buildUserContent(ctx, conversationID, content, files)
-	defer cleanupTempFiles(tempPaths)
+	// 组装 user content,图片数据存入内存缓存供 OCR / grading 工具用
+	userContent, err := s.buildUserContent(ctx, conversationID, content, files)
 	if err != nil {
 		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
 	}
+	defer tools.DeleteSessionImages(conversationID)
 
 	fileIDs := make([]string, len(files))
 	for i, f := range files {
@@ -348,7 +385,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	go func() {
 		defer close(frames)
 		streamErr <- s.llm.StreamChat(ctx, llmUserID(userID), conversationID, messageID, userContent,
-			llm.StreamOptions{FileIDs: fileIDs},
+			llm.StreamOptions{FileIDs: fileIDs, StateDelta: map[string]any{"_solochat_session": conversationID}},
 			func(f llm.StreamFrame) bool {
 				select {
 				case <-ctx.Done():
@@ -411,44 +448,32 @@ func (s *Service) writeFrame(w *sseWriter, f llm.StreamFrame) {
 }
 
 // buildUserContent 把文本 + 附件组装成 ADK 用的 genai.Content。
-//   - 图片 → 直接 Part.InlineData,LLM 能看;同时落盘一份让 OCR/grading 工具复用
+//   - 图片 → Part.InlineData + 存内存缓存供 OCR/grading 工具用
 //   - PDF → 直接 Part.InlineData
 //   - text/markdown → 读内容 inline 拼到 prompt 文本
-//
-// 落盘文件名前缀 = file_id,与 tools.CacheKey 反查保持一致(round 6 的稳定 key 模式)。
-func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile) (*genai.Content, []string, error) {
+func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile) (*genai.Content, error) {
 	parts := make([]*genai.Part, 0, len(files)+1)
 	var inlineBlocks []string
-	var tempPaths []string
-	var imagePathsForTools []string
+	var cachedImages []tools.CachedImage
+	var imageIndices []string
 
-	baseDir := filepath.Join(os.TempDir(), "mechhub", sessionID)
-	if len(files) > 0 {
-		if err := os.MkdirAll(baseDir, 0o755); err != nil {
-			return nil, tempPaths, err
-		}
-	}
-
-	for _, f := range files {
+	for i, f := range files {
 		body, err := s.oss.Download(ctx, f.OSSKey)
 		if err != nil {
-			return nil, tempPaths, err
+			return nil, err
 		}
 		data, err := readAll(body)
 		_ = body.Close()
 		if err != nil {
-			return nil, tempPaths, err
+			return nil, err
 		}
 
 		mime := f.MimeType
 		switch {
 		case imageMimes[mime]:
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}})
-			target := filepath.Join(baseDir, f.ID+"-"+safeFilename(f.OriginalName))
-			if err := os.WriteFile(target, data, 0o644); err == nil {
-				tempPaths = append(tempPaths, target)
-				imagePathsForTools = append(imagePathsForTools, target)
-			}
+			cachedImages = append(cachedImages, tools.CachedImage{Data: data, MimeType: mime, OrigName: f.OriginalName})
+			imageIndices = append(imageIndices, fmt.Sprintf("[%d] %s", i, f.OriginalName))
 		case mime == "application/pdf":
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}})
 		case textMimes[mime]:
@@ -460,11 +485,16 @@ func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, 
 		}
 	}
 
+	if len(cachedImages) > 0 {
+		tools.StoreSessionImages(sessionID, cachedImages)
+	}
+
 	composed := strings.TrimSpace(text)
-	if len(imagePathsForTools) > 0 {
-		composed += "\n\n[本轮上传图片本地路径,供 grade_submission / ocr_images_cached 工具使用]\n"
-		for _, p := range imagePathsForTools {
-			composed += "- " + p + "\n"
+	if len(imageIndices) > 0 {
+		composed += "\n\n[本轮上传图片,供 grade_with_ocr / ocr_images_cached 工具使用]\n"
+		composed += "可用图片:\n"
+		for _, idx := range imageIndices {
+			composed += idx + "\n"
 		}
 	}
 	if len(inlineBlocks) > 0 {
@@ -473,32 +503,7 @@ func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, 
 
 	leading := &genai.Part{Text: composed}
 	parts = append([]*genai.Part{leading}, parts...)
-	return &genai.Content{Role: "user", Parts: parts}, tempPaths, nil
-}
-
-func cleanupTempFiles(paths []string) {
-	for _, p := range paths {
-		_ = os.Remove(p)
-	}
-}
-
-func safeFilename(name string) string {
-	if name == "" {
-		return "file"
-	}
-	out := make([]rune, 0, len(name))
-	for _, r := range name {
-		switch {
-		case r >= '0' && r <= '9', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r == '.', r == '-', r == '_':
-			out = append(out, r)
-		default:
-			out = append(out, '_')
-		}
-		if len(out) >= 120 {
-			break
-		}
-	}
-	return string(out)
+	return &genai.Content{Role: "user", Parts: parts}, nil
 }
 
 func autoTitle(firstMessage string) string {
