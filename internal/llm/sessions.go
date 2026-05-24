@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 	"gorm.io/gorm"
 )
+
+// fileBlockRe 匹配 buildUserContent 注入的用户消息内文件内容块:
+//
+//	[文件 xxx.txt]
+//	```
+//	文件正文...
+//	```
+var fileBlockRe = regexp.MustCompile(`\n\n\[文件 [^\]]+\]\n\x60\x60\x60[\s\S]*?\x60\x60\x60\n?`)
 
 // MessagePart 是前端可渲染的最小单位。和 internal/solochat.MessagePart
 // 字段一致(json tag 完全对齐),由 solochat.Service 直接转换复用。
@@ -119,6 +128,7 @@ func (s *Service) ListMessages(ctx context.Context, userID, sessionID string) ([
 func stripToolHints(m *Message) {
 	for i := range m.Parts {
 		if m.Parts[i].Type == "text" {
+			m.Parts[i].Text = fileBlockRe.ReplaceAllString(m.Parts[i].Text, "")
 			if idx := strings.Index(m.Parts[i].Text, "\n\n[本轮"); idx != -1 {
 				m.Parts[i].Text = m.Parts[i].Text[:idx]
 			}

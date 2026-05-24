@@ -160,8 +160,8 @@ func (h *Handler) GetAttachment(c *gin.Context) {
 		return
 	}
 	defer body.Close()
-	c.Header("Cache-Control", "private, max-age=86400")
+	c.Header("Cache-Control", "no-cache")
 	c.DataFromReader(200, f.Size, f.MimeType, body, map[string]string{
-		"Content-Disposition": `inline; filename="` + f.OriginalName + `"`,
+		"Content-Disposition": `attachment; filename="` + f.OriginalName + `"`,
 	})
 }
