@@ -212,14 +212,10 @@ func mimeFromExt(ext string) string {
 	}
 }
 
-func (s *Service) CreateConversation(ctx context.Context, userID, title string) (*Conversation, error) {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		title = "新对话"
-	}
+func (s *Service) CreateConversation(ctx context.Context, userID string) (*Conversation, error) {
 	now := time.Now()
 	c := &Conversation{
-		ID: uuid.NewString(), UserID: userID, Title: title,
+		ID: uuid.NewString(), UserID: userID, Title: "新对话",
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := s.repo.InsertConversation(ctx, c); err != nil {
@@ -310,7 +306,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID strin
 //     供 OCR/grading 工具复用(文件名前缀 = file_id,与 cache key 对齐)
 //  4. 调 llm.StreamChat 把 ADK 流式事件翻译成 SSE 帧
 //  5. 首条消息后自动命名 + 触发 TouchConversation
-func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string) {
+func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string, grading bool) {
 	// 派生一个本 stream 专属的 cancel ctx,挂到 activeStreams。同 conversation
 	// 有未完的 stream(用户没等回就再发,或两个标签同时发)时,先把旧 stream
 	// cancel 掉,新 stream 替换 entry,UX 跟 ChatGPT 一致。
@@ -345,7 +341,9 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 		}
 	}
 
-	isFirstMessage := conv.CreatedAt.Equal(conv.UpdatedAt)
+	// 用持久化的 TitleGenerated 标志判断,比 CreatedAt.Equal(UpdatedAt) 鲁棒:
+	// rename / touch / 二次 stream 都不会误关掉这扇门。
+	isFirstMessage := !conv.TitleGenerated
 
 	// 用户消息立刻回显(临时 id;真正的 ADK event id 流末让前端 GET /messages 重拉)
 	userPending := MessageDTO{
@@ -362,7 +360,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	w.write(StreamEvent{Type: StreamUserInput, Message: &userPending})
 
 	// 组装 user content,图片数据存入内存缓存供 OCR / grading 工具用
-	userContent, err := s.buildUserContent(ctx, conversationID, content, files)
+	userContent, err := s.buildUserContent(ctx, conversationID, content, files, grading)
 	if err != nil {
 		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
@@ -396,6 +394,35 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 			})
 	}()
 
+	// 累积 assistant 文本。第一轮会在 stream 进行中提前 spawn 标题 goroutine,
+	// 流末用 select 等结果(命中时几乎零额外等待)。
+	var assistantBuf strings.Builder
+	var finishReason string
+
+	// 标题并行启动控制:
+	//   - titleStarted: 只启动一次
+	//   - titleCh:      goroutine 把结果写回(带 buffer 1,防止流末没等就 cancel)
+	//   - titleThreshold: 累积到这么多字节就提前启 LLM(典型用户提问 + 一两句回答足够说明话题)
+	var (
+		titleStarted   bool
+		titleCh        chan string
+		titleThreshold = 80
+	)
+	maybeStartTitle := func() {
+		if !isFirstMessage || titleStarted {
+			return
+		}
+		snapshot := assistantBuf.String()
+		if strings.TrimSpace(snapshot) == "" {
+			return
+		}
+		titleStarted = true
+		titleCh = make(chan string, 1)
+		go func() {
+			titleCh <- generateFirstTitle(s.llm, content, snapshot, "")
+		}()
+	}
+
 	for {
 		select {
 		case <-ticker.C:
@@ -406,6 +433,26 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 			if !ok {
 				goto done
 			}
+			switch f.Type {
+			case llm.FrameTextDelta:
+				assistantBuf.WriteString(f.Delta)
+				// 累到阈值就 fire-and-async:让标题 LLM 跟主回答并行跑,
+				// 长回答场景下流末几乎零等待。
+				if assistantBuf.Len() >= titleThreshold {
+					maybeStartTitle()
+				}
+			case llm.FrameTextComplete:
+				// 某些 provider(OpenAI 兼容)只发 text_complete 不发 text_delta;
+				// 此处补累,顺便兜底触发标题启动。
+				if assistantBuf.Len() == 0 {
+					assistantBuf.WriteString(f.Text)
+				}
+				maybeStartTitle()
+			case llm.FrameMessageDone:
+				finishReason = f.FinishReason
+				// 极短回答可能没到阈值也没 text_complete,流末再补一次。
+				maybeStartTitle()
+			}
 			s.writeFrame(w, f)
 		}
 	}
@@ -413,10 +460,12 @@ done:
 	_ = <-streamErr // 不阻塞,streamErr 已被发送
 
 	if isFirstMessage {
-		title := autoTitle(content)
+		title := awaitTitle(titleCh, content)
+		_ = finishReason // 保留累积,将来若想区分场景再用
 		if title != "" {
 			_ = s.repo.UpdateConversationTitle(context.Background(), conversationID, userID, title)
 			conv.Title = title
+			conv.TitleGenerated = true
 			conv.UpdatedAt = time.Now()
 			dto := toConversationDTO(conv)
 			w.write(StreamEvent{Type: StreamConversationName, Conversation: &dto})
@@ -424,6 +473,45 @@ done:
 	} else {
 		_ = s.repo.TouchConversation(ctx, conversationID)
 	}
+}
+
+// awaitTitle 等并行启动的标题 goroutine。若根本没启起来(纯工具调用 / 全程
+// 没有 text 输出),直接走兜底。命中即返回,超时 8s 也兜底。
+func awaitTitle(ch chan string, userText string) string {
+	if ch == nil {
+		// 流里完全没文本 → 没启过 goroutine,直接用用户消息兜底。
+		return autoTitle(userText)
+	}
+	select {
+	case t := <-ch:
+		if t == "" {
+			return autoTitle(userText)
+		}
+		return t
+	case <-time.After(8 * time.Second):
+		return autoTitle(userText)
+	}
+}
+
+// generateFirstTitle 首选 LLM 总结,失败回退用户消息前 20 字 + ellipsis。
+//
+// 设计:即使 stream 是 cancelled / error 结束,只要 assistant 已经说了
+// 一些内容,就值得让 LLM 起标题(用户已经看到部分回答,知道在聊什么)。
+// 只有 assistantText 真的为空才直接走兜底。
+//
+// finishReason 形参保留是为了将来可能区分不同场景(比如 fatal error 时
+// 走特别 prompt),目前不参与判定。
+func generateFirstTitle(llmSvc *llm.Service, userText, assistantText, _ string) string {
+	if strings.TrimSpace(assistantText) == "" {
+		return autoTitle(userText)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	title, err := llmSvc.GenerateTitle(ctx, userText, assistantText)
+	if err != nil || title == "" {
+		return autoTitle(userText)
+	}
+	return title
 }
 
 func (s *Service) writeFrame(w *sseWriter, f llm.StreamFrame) {
@@ -451,7 +539,7 @@ func (s *Service) writeFrame(w *sseWriter, f llm.StreamFrame) {
 //   - 图片 → Part.InlineData + 存内存缓存供 OCR/grading 工具用
 //   - PDF → 直接 Part.InlineData
 //   - text/markdown → 读内容 inline 拼到 prompt 文本
-func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile) (*genai.Content, error) {
+func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile, grading bool) (*genai.Content, error) {
 	parts := make([]*genai.Part, 0, len(files)+1)
 	var inlineBlocks []string
 	var cachedImages []tools.CachedImage
@@ -490,6 +578,9 @@ func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, 
 	}
 
 	composed := strings.TrimSpace(text)
+	if grading {
+		composed += "\n\n[本轮用户开启了\"批改作业\"模式,请以批改老师视角分析作业内容、指出错误并给出评分建议;若包含图片,优先调用 grade_with_ocr 工具。]"
+	}
 	if len(imageIndices) > 0 {
 		composed += "\n\n[本轮上传图片,供 grade_with_ocr / ocr_images_cached 工具使用]\n"
 		composed += "可用图片:\n"

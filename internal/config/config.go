@@ -84,10 +84,30 @@ type SolochatConfig struct {
 }
 
 type LLMConfig struct {
+	// Provider 选 root agent 的 model 后端:"gemini"(默认)或 "openai-compat"。
+	// grader(grade_with_ocr 内部 vision+structured)恒走 Gemini,不受这里影响。
+	Provider string
+
 	GeminiAPIKey      string
 	GeminiBaseURL     string
 	GeminiModel       string
 	GeminiGraderModel string
+
+	// OpenAI ChatCompletions-兼容后端(DeepSeek / Qwen / OpenRouter / vLLM ...)
+	// 只有 Provider="openai-compat" 时必填。
+	OpenAICompatBaseURL string
+	OpenAICompatAPIKey  string
+	OpenAICompatModel   string
+	// 模型是否支持 image_url 多模态(qwen-vl-max / GPT-4o = true,DeepSeek
+	// V4 主线 = false)。false 时图片不发给 root LLM,只走工具缓存。
+	OpenAICompatVision bool
+
+	// 标题专用模型(OpenAI 兼容)。仅用于会话首轮自动标题生成,
+	// 跟主聊天模型解耦,可以指向更快更便宜的小模型(如 DeepSeek V3.2 chat)。
+	// 三项任一为空 → 回退到 root model 做标题,与旧行为一致。
+	TitleModelBaseURL string
+	TitleModelAPIKey  string
+	TitleModelName    string
 }
 
 func Load() *Config {
@@ -145,10 +165,18 @@ func Load() *Config {
 			MaxFileSize:              int64(getInt("SOLOCHAT_MAX_FILE_SIZE_BYTES", 20*1024*1024)),
 		},
 		LLM: LLMConfig{
-			GeminiAPIKey:      requireEnv("GEMINI_API_KEY"),
-			GeminiBaseURL:     getEnv("GEMINI_BASE_URL", ""),
-			GeminiModel:       getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
-			GeminiGraderModel: getEnv("GEMINI_GRADER_MODEL", ""),
+			Provider:            getEnv("LLM_PROVIDER", "gemini"),
+			GeminiAPIKey:        requireEnv("GEMINI_API_KEY"),
+			GeminiBaseURL:       getEnv("GEMINI_BASE_URL", ""),
+			GeminiModel:         getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
+			GeminiGraderModel:   getEnv("GEMINI_GRADER_MODEL", ""),
+			OpenAICompatBaseURL: getEnv("OPENAI_COMPAT_BASE_URL", ""),
+			OpenAICompatAPIKey:  getEnv("OPENAI_COMPAT_API_KEY", ""),
+			OpenAICompatModel:   getEnv("OPENAI_COMPAT_MODEL", ""),
+			OpenAICompatVision:  getBool("OPENAI_COMPAT_VISION", false),
+			TitleModelBaseURL:   getEnv("TITLE_MODEL_BASE_URL", ""),
+			TitleModelAPIKey:    getEnv("TITLE_MODEL_API_KEY", ""),
+			TitleModelName:      getEnv("TITLE_MODEL_NAME", ""),
 		},
 	}
 	return cfg

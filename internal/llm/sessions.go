@@ -3,10 +3,12 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
+	"gorm.io/gorm"
 )
 
 // MessagePart 是前端可渲染的最小单位。和 internal/solochat.MessagePart
@@ -42,6 +44,9 @@ func (s *Service) ListMessages(ctx context.Context, userID, sessionID string) ([
 		SessionID: sessionID,
 	})
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if resp == nil || resp.Session == nil {
@@ -101,9 +106,24 @@ func (s *Service) ListMessages(ctx context.Context, userID, sessionID string) ([
 
 	out := make([]Message, len(order))
 	for i, m := range order {
+		if m.Role == "user" {
+			stripToolHints(m)
+		}
 		out[i] = *m
 	}
 	return out, nil
+}
+
+// stripToolHints 去掉 buildUserContent 拼在用户消息末尾的工具提示。
+// 提示格式固定以 "\n\n[本轮" 开头,不会出现在正常用户输入中。
+func stripToolHints(m *Message) {
+	for i := range m.Parts {
+		if m.Parts[i].Type == "text" {
+			if idx := strings.Index(m.Parts[i].Text, "\n\n[本轮"); idx != -1 {
+				m.Parts[i].Text = m.Parts[i].Text[:idx]
+			}
+		}
+	}
 }
 
 func accumulateParts(parts *[]MessagePart, ev *session.Event) {

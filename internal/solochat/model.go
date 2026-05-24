@@ -25,6 +25,10 @@ type Conversation struct {
 	Title     string    `gorm:"type:varchar(120)"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null;index:idx_user_updated,priority:2,sort:desc"`
+	// TitleGenerated 标记是否已经为本会话生成过自动标题(AI 总结或兜底)。
+	// 取代旧的 `CreatedAt.Equal(UpdatedAt)` 判定:一旦 rename / touch 改过
+	// UpdatedAt,旧逻辑就永远不再尝试生成 AI 标题。
+	TitleGenerated bool `gorm:"not null;default:false"`
 }
 
 func (Conversation) TableName() string { return "solochat_conversations" }
@@ -82,17 +86,14 @@ type MessageDTO struct {
 	CreatedAt      string          `json:"created_at"`
 }
 
-type CreateConversationReq struct {
-	Title string `json:"title" binding:"max=100"`
-}
-
 type UpdateConversationReq struct {
 	Title string `json:"title" binding:"required,min=1,max=100"`
 }
 
 type SendMessageReq struct {
-	Content     string   `json:"content" binding:"required,min=1,max=8000"`
+	Content     string   `json:"content" binding:"max=8000"`
 	Attachments []string `json:"attachments"`
+	Grading     bool     `json:"grading,omitempty"`
 }
 
 const (

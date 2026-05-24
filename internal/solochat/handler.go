@@ -32,10 +32,10 @@ func (h *Handler) ListConversations(c *gin.Context) {
 }
 
 func (h *Handler) CreateConversation(c *gin.Context) {
-	var req CreateConversationReq
-	_ = c.ShouldBindJSON(&req)
+	// 不接受任何 body 字段:创建恒为"新对话",首次 AI 回复后由 LLM 总结标题。
+	// 重命名走 PUT /conversations/:id。
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	conv, err := h.svc.CreateConversation(c.Request.Context(), uid, req.Title)
+	conv, err := h.svc.CreateConversation(c.Request.Context(), uid)
 	if err != nil {
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 		return
@@ -100,7 +100,7 @@ func (h *Handler) SendMessageStream(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments)
+	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments, req.Grading)
 }
 
 // StopMessage 取消当前用户在该对话内正在跑的 stream(如果有)。

@@ -9,6 +9,59 @@
 
 ---
 
+## Claude 轮 13 — 2026-05-20 — 对话标题 LLM 自动总结(ChatGPT 风格)
+
+### ⚠️ 破坏性变更
+
+1. **`POST /api/solochat/conversations` 不再接受 `title` 入参**
+   - 创建恒为 `"新对话"`,body 给 `{}` 即可
+   - [internal/solochat/model.go](internal/solochat/model.go) 删 `CreateConversationReq`
+   - [internal/solochat/handler.go](internal/solochat/handler.go) handler 不再绑 body
+   - [internal/solochat/service.go::CreateConversation](internal/solochat/service.go) 签名改为 `(ctx, userID) → (*Conversation, error)`
+   - 前端:把请求 body 改成 `{}`(或干脆不传 body);需要重命名走原 `PUT /api/solochat/conversations/:id`
+
+### 功能
+
+2. **首次 AI 回复后 LLM 自动出标题**
+   - 之前是用户消息前 24 字截断(`autoTitle`),现在改成用 root agent 的模型(跟随 `LLM_PROVIDER`:Gemini 走 Gemini,DeepSeek 走 DeepSeek)总结 user/assistant 对话
+   - 新增 [internal/llm/title.go::GenerateTitle](internal/llm/title.go) —— 走 `model.LLM` 非流式 `GenerateContent`,prompt 限定 ≤16 字、纯标题、无引号无标点;5–8s 超时
+   - [internal/solochat/service.go](internal/solochat/service.go) 在 stream loop 里累积 assistant `text_delta`,流末若 `isFirstMessage` 且 `finishReason=stop` 调 `GenerateTitle`,失败 / 超时 / 错误结束 / 用户取消 → **回退到旧的 `autoTitle`**(主流程不受影响)
+   - SSE 帧形状不变(仍是 `conversation_title` + 整 `conversation` DTO)
+
+### 杂项
+
+3. **Postman 同步**:[Create conversation.request.yaml](postman/collections/MechHub Backend/solochat/conversations/Create conversation.request.yaml) body 改空 `{}`,描述说明"首次 AI 回复后由 root LLM 总结标题"
+
+---
+
+## Claude 轮 12 — 2026-05-19 — Root agent 可换 OpenAI-compat 后端(DeepSeek V4-Pro)
+
+### 功能
+
+1. **新增 ADK Go 的 OpenAI ChatCompletions-兼容 model 适配器**
+   - 新增 [internal/llm/openai/openai.go](internal/llm/openai/openai.go)(改造自 [byebyebruce/adk-go-openai](https://github.com/byebyebruce/adk-go-openai),MIT)。原版钉 ADK v0.2.0,这里对齐 v1.2.0 接口
+   - 覆盖:streaming(`Partial=true` 增量 + 收尾 aggregated)/ tool calling(按 `tool_call.index` 跨 chunk 累积 args)/ vision(`InlineData` → data URL)/ structured output(`ResponseSchema` → `response_format: json_schema`)/ `ReasoningEffort` low/medium/high / 多 tool response 合并 / system instruction 前置
+   - **打开 reasoning_content 通道**(原版被注释成 TODO):DeepSeek R1 / V4 的思考链 → `genai.Part{Thought: true}` + `Partial: true`,直接走 `sse.go` 现有的 `reasoning_delta` 帧路径,与 Gemini thinking 一致
+2. **Provider switch**
+   - [internal/config/config.go](internal/config/config.go) `LLMConfig` 加 `Provider` + 3 个 OpenAI-compat 字段;新 env `LLM_PROVIDER` / `OPENAI_COMPAT_BASE_URL` / `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODEL`
+   - [internal/llm/runner.go::buildRootModel](internal/llm/runner.go) 按 `Provider` 选 `gemini.NewModel` 或 `openai.NewOpenAIModel`。`Provider` 留空 / `"gemini"` 都走原来的 Gemini 路径(向后兼容)
+3. **grader 不受影响**:`grade_with_ocr` 内部 vision+structured 仍走 `google.golang.org/genai` SDK 直连(不经 ADK model 层),即便 root agent 换成 DeepSeek 也能照常批改
+
+### 杂项
+
+- [.env.example](.env.example) 加 `LLM_PROVIDER` 与 OpenAI-compat 三件套样例(默认 `gemini`,DeepSeek 切换样例写在注释里)
+- 新增 `github.com/sashabaranov/go-openai v1.41.2` 依赖
+
+### 切到 DeepSeek V4-Pro 步骤
+```
+LLM_PROVIDER=openai-compat
+OPENAI_COMPAT_BASE_URL=https://api.deepseek.com/v1
+OPENAI_COMPAT_API_KEY=sk-...
+OPENAI_COMPAT_MODEL=deepseek-v4-pro
+```
+
+---
+
 ## Claude 轮 11 — 2026-05-19 — 图片传输从磁盘改内存缓存,消除 LLM 路径幻觉
 
 ### ⚠️ 破坏性变更

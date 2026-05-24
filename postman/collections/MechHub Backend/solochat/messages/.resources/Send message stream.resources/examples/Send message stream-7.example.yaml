@@ -1,0 +1,208 @@
+$kind: http-example
+name: Send message stream
+description: |-
+  Send a user message to a conversation. Responds with `text/event-stream` — one SSE frame per event: ``` data: {"type":"...","message_id":"...",...}\n\n ```
+
+  ## SSE event types (read `type` field of the JSON in `data:` line)
+
+  - `user_input`         — user message echo (`message.id` 是
+    `pending-user-<random>` 占位,真正的 ADK event UUID 要 stream 结束后
+    重新 `GET /messages` 拿)
+  - `message_start`      — assistant turn begins (`message_id`, `model`) - `reasoning_delta`    — model's thinking trace, streamed token by token - `text_delta`         — assistant text chunk - `text_complete`      — text block finished (`text` is the full final text) - `tool_call_start`    — agent decided to invoke a tool (`tool_use_id`, `name`, `input` JSON) - `tool_result`        — tool returned (`tool_use_id`, `output` JSON, `is_error`, `elapsed_ms`) - `conversation_title` — only on the very first message (auto-named) - `error`              — agent or backend error - `message_done`       — assistant turn ended (`finish_reason`)
+
+  Comment lines `: ping\n\n` are sent every 25s as heartbeats; client should ignore them.
+
+  Typical sequence for an answer that uses a tool: ``` user_input → message_start → reasoning_delta* → tool_call_start
+    → tool_result → text_delta* → text_complete → message_done
+  ```
+
+  Frontend pattern: `fetch()` with POST body, then read response body as a stream, split by `\n\n` to get frames, strip leading `data: ` and `JSON.parse`. Native `EventSource` API can't be used because this endpoint is POST.
+
+  ## 持久化(轮 7)
+  Go 端不再 InsertMessage / FinalizeMessage,也不再有 Python agent 服务。 Go 直接用 ADK Go 跑 Gemini 2.5,session events + state 落 MySQL。请求体 `attachments` 里的 file_id 在流跑完后,由 `internal/llm/sse.go` 写到 session.state 的 `_solochat_attachments_<invocation_id>` 键,后续 `GET /messages` 反查挂到 user message 的 attachments[] 字段。
+request:
+  url: "{{baseUrl}}/api/solochat/conversations/{{conversationId}}/messages/stream"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: text/event-stream
+  body:
+    type: json
+    content: |+
+      {
+        "content": "你可以批改一下这个作业吗",
+        "attachments": ["fd5a1cb9-fb02-43db-aa9d-b1616b19b62e", "fdf50d15-5f60-4a01-8f1f-29fd77462a8f", "ecc00eb0-8840-4c6f-9b93-82e2646de65b"]
+      }
+
+
+
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    cache-control: no-cache
+    connection: keep-alive
+    content-type: text/event-stream; charset=utf-8
+    x-accel-buffering: no
+    date: Tue, 19 May 2026 15:34:58 GMT
+    transfer-encoding: chunked
+  body:
+    type: text
+    content: |+
+      data: {"type":"user_input","message":{"id":"pending-user-9c3cdba8-1a60-4515-9ee8-58621805042a","conversation_id":"492666cf-26b3-49de-adb4-0f46f83c2209","role":"user","parts":[{"type":"text","text":"你可以批改一下这个作业吗"}],"attachments":[{"id":"ecc00eb0-8840-4c6f-9b93-82e2646de65b","kind":"image","mime_type":"image/png","original_name":"题目01.png","size":85683,"url":"http://localhost:8080/api/solochat/attachments/ecc00eb0-8840-4c6f-9b93-82e2646de65b"},{"id":"fd5a1cb9-fb02-43db-aa9d-b1616b19b62e","kind":"image","mime_type":"image/png","original_name":"answer.png","size":242218,"url":"http://localhost:8080/api/solochat/attachments/fd5a1cb9-fb02-43db-aa9d-b1616b19b62e"},{"id":"fdf50d15-5f60-4a01-8f1f-29fd77462a8f","kind":"image","mime_type":"image/png","original_name":"题目02.png","size":12213,"url":"http://localhost:8080/api/solochat/attachments/fdf50d15-5f60-4a01-8f1f-29fd77462a8f"}],"status":"completed","created_at":"2026-05-19T23:34:58+08:00"}}
+
+      data: {"type":"message_start","message_id":"msg_10dd59ed-cfa"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"用户"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"上传"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"了三"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"张"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"图片"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"，"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"看起来"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"是"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"作业"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"。"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"根据"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"批"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"改"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"流程"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"，"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"我需要"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"先"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"调用"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" `"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"ocr"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"_images"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"_c"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"ached"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"`"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" "}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"对"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"这三"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"张"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"图片"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"做"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" OCR"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" "}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"识别"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"，"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"然后再"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"调用"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" `"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"grade"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"_with"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"_"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"ocr"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"`"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" "}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"进行"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"批"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"改"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"。\n\n"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"让我"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"先"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"做"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":" OCR"}
+
+      data: {"type":"reasoning_delta","message_id":"msg_10dd59ed-cfa","delta":"。"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"好的"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"，"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"我先"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"对"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"三"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"张"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"图片"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"做"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":" OCR"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":" "}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"识别"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"，"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"然后再"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"批"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"改"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"。"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"第一步"}
+
+      data: {"type":"text_delta","message_id":"msg_10dd59ed-cfa","delta":"："}
+
+      data: {"type":"text_complete","message_id":"msg_10dd59ed-cfa","text":"好的，我先对三张图片做 OCR 识别，然后再批改。第一步："}
+
+      data: {"type":"tool_call_start","message_id":"msg_10dd59ed-cfa","tool_use_id":"call_00_x32HqR21abGQsAVAQg6K8261","name":"ocr_images_cached","input":{"image_indices":[0,1,2]}}
+
+      data: {"type":"tool_result","message_id":"msg_10dd59ed-cfa","tool_use_id":"call_00_x32HqR21abGQsAVAQg6K8261","name":"ocr_images_cached","output":{"cached_to_state":true,"has_formulas":true,"image_count":3,"ok":true,"page_count":3,"preview":"图示平面结构由直角折杆 ABC和直杆 BD以及DE组成。B和D处为铰链连接。A\n处为固定端约束,E处为固定铰链支座。在AB段受载荷集度为q的均布力作用,BC段受\n�","text_chars":1316}}
+
+      data: {"type":"error","message_id":"msg_10dd59ed-cfa","code":"agent_error","error":"error, status code: 400, status: 400 Bad Request, message: The `reasoning_content` in the thinking mode must be passed back to the API."}
+
+      data: {"type":"message_done","message_id":"msg_10dd59ed-cfa","finish_reason":"error"}
+
+      data: {"type":"conversation_title","conversation":{"id":"492666cf-26b3-49de-adb4-0f46f83c2209","title":"你可以批改一下这个作业吗","created_at":"2026-05-19T15:34:42Z","updated_at":"2026-05-19T23:35:15+08:00"}}
+
+order: 4152669822095674

@@ -47,10 +47,15 @@ func (r *Repo) FindConversation(ctx context.Context, id, userID string) (*Conver
 	return &c, nil
 }
 
+// UpdateConversationTitle 不管是 AI 自动生成、autoTitle 兜底,还是用户手动
+// rename,都标记 title_generated=true,后续 stream 不会再尝试覆盖。
 func (r *Repo) UpdateConversationTitle(ctx context.Context, id, userID, title string) error {
 	res := r.db.WithContext(ctx).Model(&Conversation{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Update("title", title)
+		Updates(map[string]any{
+			"title":           title,
+			"title_generated": true,
+		})
 	if res.Error != nil {
 		return res.Error
 	}

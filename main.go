@@ -46,10 +46,18 @@ func main() {
 	google := oauth.NewGoogle(cfg.Google, cfg.App.BackendBaseURL)
 
 	llmSvc, err := llm.Bootstrap(ctx, llm.Config{
-		MySQLDSN:      cfg.MySQL.DSN,
-		GeminiAPIKey:  cfg.LLM.GeminiAPIKey,
-		GeminiBaseURL: cfg.LLM.GeminiBaseURL,
-		GeminiModel:   cfg.LLM.GeminiModel,
+		MySQLDSN:            cfg.MySQL.DSN,
+		Provider:            cfg.LLM.Provider,
+		GeminiAPIKey:        cfg.LLM.GeminiAPIKey,
+		GeminiBaseURL:       cfg.LLM.GeminiBaseURL,
+		GeminiModel:         cfg.LLM.GeminiModel,
+		OpenAICompatBaseURL: cfg.LLM.OpenAICompatBaseURL,
+		OpenAICompatAPIKey:  cfg.LLM.OpenAICompatAPIKey,
+		OpenAICompatModel:   cfg.LLM.OpenAICompatModel,
+		OpenAICompatVision:  cfg.LLM.OpenAICompatVision,
+		TitleModelBaseURL:   cfg.LLM.TitleModelBaseURL,
+		TitleModelAPIKey:    cfg.LLM.TitleModelAPIKey,
+		TitleModelName:      cfg.LLM.TitleModelName,
 	})
 	if err != nil {
 		log.Fatalf("llm bootstrap: %v", err)
