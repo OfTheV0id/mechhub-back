@@ -1,0 +1,11 @@
+$kind: http-request
+name: List members
+description: |-
+  列出班级所有成员。仅成员可调。返回顺序:owner 永远第一,其他按加入时间升序。
+  每条返回 `user` 内嵌(id/email/name/role/avatar_url)、`role`(在班级里的角色)、
+  `is_owner`(冗余字段,等价于 `user.id == class.owner_user_id`)。
+url: "{{baseUrl}}/api/classes/{{classId}}/members"
+method: GET
+headers:
+  Accept: application/json
+order: 3100

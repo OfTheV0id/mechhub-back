@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get invite info
+description: |-
+  Owner only. 返回当前班级的邀请 token / 分享链接 / 过期时间 / 启停状态。
+  字段:`{ token, share_url, expires_at (null=永不过期), disabled, expired }`。
+url: "{{baseUrl}}/api/classes/{{classId}}/invite"
+method: GET
+headers:
+  Accept: application/json
+order: 1300

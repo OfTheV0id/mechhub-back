@@ -1,0 +1,8 @@
+$kind: http-request
+name: Get attachment
+description: |-
+  Stream-through 拉附件字节流。班级成员可调。响应原始文件字节,
+  Content-Type 跟随上传时检测的 mime,Content-Disposition `inline; filename="..."`。
+url: "{{baseUrl}}/api/channels/{{channelId}}/attachments/{{channelAttachmentId}}"
+method: GET
+order: 6310

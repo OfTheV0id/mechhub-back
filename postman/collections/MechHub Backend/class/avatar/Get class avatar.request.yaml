@@ -1,0 +1,11 @@
+$kind: http-request
+name: Get class avatar
+description: |-
+  以 stream-through 方式拉班级头像图片二进制。仅班级成员可调。
+  返回 `Content-Type: image/*` + `Cache-Control: private, max-age=86400`。
+  班级无头像时返回 404(无响应体)。
+url: "{{baseUrl}}/api/classes/{{classId}}/avatar"
+method: GET
+headers:
+  Accept: "image/*"
+order: 2200

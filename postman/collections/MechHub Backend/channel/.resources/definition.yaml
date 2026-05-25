@@ -1,0 +1,26 @@
+$kind: collection
+description: >-
+  频道模块(第 15 轮新增)。Discord 服务器式的多频道讨论 —— 一个班级有多个
+  话题频道(`#general` 默认存在不可删,owner 或班里 teacher 成员可新建其他
+  频道)。所有端点需登录(session_id cookie)。
+
+
+  数据模型:`channels` + `channel_messages` + `channel_attachments`,主键全 UUID。
+  附件 OSS key 格式 `channels/<channelID>/<random><ext>`,与 user / class 头像、
+  solochat 附件存储分开。
+
+
+  **消息实时推送**:写操作(SendMessage / EditMessage / DeleteMessage)完成后
+  服务端通过 WebSocket(`GET /api/ws`)向该班所有在线成员广播
+  `channel.message.created` / `channel.message.updated` / `channel.message.deleted`
+  帧。前端只需 fetch 一次 List messages 作为初始状态,后续完全靠 WS 帧更新。
+
+
+  **附件流程**:先 POST 上传(返回 `attachment_id` 列表),然后调 Send message
+  时把 `attachment_id` 数组传进 body。后端原子绑定;绑定失败回滚消息。
+
+
+  **权限**:列消息 / 发消息 / 上传 / 拉附件 = 班级成员;编辑消息 = 作者本人;
+  删消息 = 作者或班 owner;建/改/删频道 = owner 或班里 `role=teacher` 成员;
+  `#general`(`is_default=true`)改名 / 删 → 400。
+order: 6000

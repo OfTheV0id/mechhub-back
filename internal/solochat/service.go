@@ -21,6 +21,7 @@ import (
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/llm"
 	"mechhub-back/internal/llm/tools"
+	"mechhub-back/internal/sseutil"
 	"mechhub-back/internal/storage"
 )
 
@@ -320,11 +321,11 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	}
 	defer s.activeStreams.CompareAndDelete(key, handle)
 
-	w := newSSE(c)
+	w := sseutil.New(c)
 
 	conv, err := s.repo.FindConversation(ctx, conversationID, userID)
 	if err != nil {
-		w.write(StreamEvent{Type: StreamError, ErrorMsg: "对话不存在"})
+		w.Write(StreamEvent{Type: StreamError, ErrorMsg: "对话不存在"})
 		return
 	}
 
@@ -332,11 +333,11 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	if len(attachmentIDs) > 0 {
 		files, err = s.repo.FindFilesByIDs(ctx, attachmentIDs, userID)
 		if err != nil {
-			w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
+			w.Write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 			return
 		}
 		if len(files) != len(attachmentIDs) {
-			w.write(StreamEvent{Type: StreamError, ErrorMsg: "部分附件不存在或无权访问"})
+			w.Write(StreamEvent{Type: StreamError, ErrorMsg: "部分附件不存在或无权访问"})
 			return
 		}
 	}
@@ -357,12 +358,12 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	for _, f := range files {
 		userPending.Attachments = append(userPending.Attachments, s.ToAttachmentDTO(&f))
 	}
-	w.write(StreamEvent{Type: StreamUserInput, Message: &userPending})
+	w.Write(StreamEvent{Type: StreamUserInput, Message: &userPending})
 
 	// 组装 user content,图片数据存入内存缓存供 OCR / grading 工具用
 	userContent, err := s.buildUserContent(ctx, conversationID, content, files, grading)
 	if err != nil {
-		w.write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
+		w.Write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
 	}
 	defer tools.DeleteSessionImages(conversationID)
@@ -426,7 +427,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	for {
 		select {
 		case <-ticker.C:
-			if !w.heartbeat() {
+			if !w.Heartbeat() {
 				return
 			}
 		case f, ok := <-frames:
@@ -468,7 +469,7 @@ done:
 			conv.TitleGenerated = true
 			conv.UpdatedAt = time.Now()
 			dto := toConversationDTO(conv)
-			w.write(StreamEvent{Type: StreamConversationName, Conversation: &dto})
+			w.Write(StreamEvent{Type: StreamConversationName, Conversation: &dto})
 		}
 	} else {
 		_ = s.repo.TouchConversation(ctx, conversationID)
@@ -514,24 +515,24 @@ func generateFirstTitle(llmSvc *llm.Service, userText, assistantText, _ string) 
 	return title
 }
 
-func (s *Service) writeFrame(w *sseWriter, f llm.StreamFrame) {
+func (s *Service) writeFrame(w *sseutil.Writer, f llm.StreamFrame) {
 	switch f.Type {
 	case llm.FrameMessageStart:
-		w.write(StreamEvent{Type: StreamMessageStart, MessageID: f.MessageID, Model: f.Model})
+		w.Write(StreamEvent{Type: StreamMessageStart, MessageID: f.MessageID, Model: f.Model})
 	case llm.FrameReasoningDelta:
-		w.write(StreamEvent{Type: StreamReasoningDelta, MessageID: f.MessageID, Delta: f.Delta})
+		w.Write(StreamEvent{Type: StreamReasoningDelta, MessageID: f.MessageID, Delta: f.Delta})
 	case llm.FrameTextDelta:
-		w.write(StreamEvent{Type: StreamTextDelta, MessageID: f.MessageID, Delta: f.Delta})
+		w.Write(StreamEvent{Type: StreamTextDelta, MessageID: f.MessageID, Delta: f.Delta})
 	case llm.FrameTextComplete:
-		w.write(StreamEvent{Type: StreamTextComplete, MessageID: f.MessageID, Text: f.Text})
+		w.Write(StreamEvent{Type: StreamTextComplete, MessageID: f.MessageID, Text: f.Text})
 	case llm.FrameToolCallStart:
-		w.write(StreamEvent{Type: StreamToolCallStart, MessageID: f.MessageID, ToolUseID: f.ToolUseID, Name: f.Name, Input: f.Input})
+		w.Write(StreamEvent{Type: StreamToolCallStart, MessageID: f.MessageID, ToolUseID: f.ToolUseID, Name: f.Name, Input: f.Input})
 	case llm.FrameToolResult:
-		w.write(StreamEvent{Type: StreamToolResult, MessageID: f.MessageID, ToolUseID: f.ToolUseID, Name: f.Name, Output: f.Output, IsError: f.IsError})
+		w.Write(StreamEvent{Type: StreamToolResult, MessageID: f.MessageID, ToolUseID: f.ToolUseID, Name: f.Name, Output: f.Output, IsError: f.IsError})
 	case llm.FrameError:
-		w.write(StreamEvent{Type: StreamError, MessageID: f.MessageID, Code: f.Code, ErrorMsg: f.Message})
+		w.Write(StreamEvent{Type: StreamError, MessageID: f.MessageID, Code: f.Code, ErrorMsg: f.Message})
 	case llm.FrameMessageDone:
-		w.write(StreamEvent{Type: StreamMessageDone, MessageID: f.MessageID, FinishReason: f.FinishReason})
+		w.Write(StreamEvent{Type: StreamMessageDone, MessageID: f.MessageID, FinishReason: f.FinishReason})
 	}
 }
 

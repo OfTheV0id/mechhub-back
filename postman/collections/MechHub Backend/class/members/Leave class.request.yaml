@@ -1,0 +1,8 @@
+$kind: http-request
+name: Leave class
+description: 当前用户退出班级。owner 不能直接退出(400),应改用删除班级。
+url: "{{baseUrl}}/api/classes/{{classId}}/leave"
+method: POST
+headers:
+  Accept: application/json
+order: 3400

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 
+	"mechhub-back/internal/channel"
+	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/db"
 	"mechhub-back/internal/llm"
@@ -29,6 +31,11 @@ func main() {
 		&session.Session{},
 		&solochat.Conversation{},
 		&solochat.UploadedFile{},
+		&class.Class{},
+		&class.Member{},
+		&channel.Channel{},
+		&channel.Message{},
+		&channel.Attachment{},
 	); err != nil {
 		log.Fatalf("auto migrate: %v", err)
 	}

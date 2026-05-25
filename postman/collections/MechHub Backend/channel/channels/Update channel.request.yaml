@@ -1,0 +1,23 @@
+$kind: http-request
+name: Update channel
+description: |-
+  更新频道。权限:班级 owner 或班里 role=teacher 的成员。
+
+  约束:
+  - `is_default=true` 的频道(`#general`)不可改 name —— 返回 400 "默认频道不可删除或改名"
+  - 同班同名 → 409
+
+
+  所有字段都可选,至少要给一个。
+url: "{{baseUrl}}/api/classes/{{classId}}/channels/{{channelId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "topic": "本周话题:第四章重点"
+    }
+order: 6130

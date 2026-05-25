@@ -1,0 +1,8 @@
+$kind: http-request
+name: Remove class avatar
+description: 移除班级头像。仅 owner 可调。OSS 文件异步删除。无头像时也返回成功(幂等)。
+url: "{{baseUrl}}/api/classes/{{classId}}/avatar"
+method: DELETE
+headers:
+  Accept: application/json
+order: 2300

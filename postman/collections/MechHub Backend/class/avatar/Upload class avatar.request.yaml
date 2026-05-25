@@ -1,0 +1,19 @@
+$kind: http-request
+name: Upload class avatar
+description: |-
+  上传 / 替换班级头像。仅 owner 可调。multipart/form-data,字段名 `avatar`。
+  允许 png/jpg/jpeg/webp,最大 `AVATAR_MAX_BYTES`(默认 2 MiB)。
+  上传成功后 OSS 旧 key 自动删除,前端用 `avatar_url`(带 `?v=<hash>` 缓存破坏)。
+url: "{{baseUrl}}/api/classes/{{classId}}/avatar"
+method: POST
+headers:
+  Accept: application/json
+body:
+  type: formdata
+  content:
+    - type: file
+      key: avatar
+      src: ""
+      description: 班级头像图片文件(png/jpg/jpeg/webp,≤2MB)
+      disabled: false
+order: 2100

@@ -1,0 +1,10 @@
+$kind: http-request
+name: List channels
+description: |-
+  列出班级下所有频道,按 position ASC, created_at ASC 排序。班级成员可调。
+  `#general` 频道(`is_default=true`)永远第一个(position=0)。
+url: "{{baseUrl}}/api/classes/{{classId}}/channels"
+method: GET
+headers:
+  Accept: application/json
+order: 6100

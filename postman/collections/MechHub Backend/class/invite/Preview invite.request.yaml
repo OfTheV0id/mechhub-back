@@ -1,0 +1,15 @@
+$kind: http-request
+name: Preview invite
+description: |-
+  任意登录用户。凭 token 预览班级信息但不加入。响应:
+
+
+  `{ class: ClassDetail, joined: bool, expired: bool, disabled: bool }`
+
+
+  前端用这个数据决定显示「已在班级里」/「邀请已过期」/「加入」按钮。
+url: "{{baseUrl}}/api/classes/invite/{{inviteToken}}"
+method: GET
+headers:
+  Accept: application/json
+order: 1330

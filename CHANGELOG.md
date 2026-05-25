@@ -9,6 +9,130 @@
 
 ---
 
+## Claude 轮 15 — 2026-05-25 — Discord 频道化 + 邀请链接 + WebSocket 实时(班级第 2 阶段)
+
+把班级从「组织容器」拓展成「Discord 服务器」式的多频道讨论空间:新模块 `internal/channel/`(频道 + 消息 + 附件),新模块 `internal/realtime/`(WebSocket 单连接多路复用),`internal/class/` 改造邀请链接 + 装配 channel hook。本轮**吃下 3 处破坏性变更**,见 ⚠️。
+
+### ⚠️ 破坏性变更
+
+1. **`GET /api/classes/events` (SSE) 删除** —— 第 14 轮刚发的 SSE 失效事件流退役。
+   - 替代:`GET /api/ws`(WebSocket),`class.invalidate` 帧的 `type` / `class_id` / `targets` / `reason` 字段保持不变,只是搬到 WS 信封里
+   - 前端:删 `EventSource`,改 `new WebSocket(...)`,按 frame.type 分发
+2. **`POST /api/classes/join { invite_code }` 删除** —— 邀请机制从 6 位短码升级为 token + 分享链接。
+   - 替代:`POST /api/classes/invite/:token/accept`,新增 `GET /api/classes/invite/:token` 预览
+   - 前端:把"输入邀请码"控件换成"贴邀请链接 / 直接打开 `<APP_BASE_URL>/invite/<token>`"
+3. **`classes.invite_code` 列废弃**(代码不再读写)+ 新增 3 列 `invite_token` / `invite_expires_at` / `invite_disabled`。
+   - `AutoMigrate` 自动加新列,但**不会**自动 drop 旧列
+   - 一次性 SQL(可选):`ALTER TABLE classes DROP COLUMN invite_code;`
+   - `ClassDetail` 响应里**不再包含** `invite_code` —— 拿 invite 走专门的 `GET /api/classes/:id/invite`
+
+### 功能
+
+4. **新模块 `internal/realtime/`**(WebSocket 基础设施,项目首个 WS 依赖)
+   - [hub.go](internal/realtime/hub.go):内存 Hub,索引 `byUser` / `byClass` / `classesByConn`;暴露 `Register / Unregister / AddUserToClass / RemoveUserFromClass / BroadcastToClass / SendToUsers`,buffer 满直接丢帧不阻塞
+   - [conn.go](internal/realtime/conn.go):per-connection read/write pump + 心跳;60s pongWait / 25s pingPeriod / 10s writeWait(对齐 gorilla 官方 chat example);`send` chan buffer=64
+   - [handler.go](internal/realtime/handler.go):`GET /api/ws`,session cookie 鉴权,upgrade 后 `Register` + 立即发 `ready` 帧带 `class_ids`。用 `MembershipResolver` 接口反向依赖 class.Repo,避免 realtime → class import 环
+   - 新依赖:`github.com/gorilla/websocket v1.5.x`(`go.mod` / `go.sum`)
+
+5. **新模块 `internal/channel/`**(Discord 频道 + 消息 + 附件)
+   - [model.go](internal/channel/model.go):3 张表 `channels` / `channel_messages` / `channel_attachments`;主键全 UUID;`channels(class_id, name)` 复合 unique;`channel_messages(channel_id, created_at DESC)` 主查询索引;`channel_attachments.message_id` 可空(上传后 SendMessage 时绑定)
+   - [repo.go](internal/channel/repo.go):CRUD + 游标分页(`before=<msgId>` → 查该消息 created_at 再 `< created_at`)+ 事务级联删除 + `BindAttachmentsToMessage` 原子绑定
+   - [service.go](internal/channel/service.go):
+     - 实现 `class.ChannelHook`:`OnClassCreated` 自动建 `#general`(`IsDefault=true`,name / is_default 锁,删 / 改名 → 400);`OnClassDeleted` 联带删该班所有频道 + 消息 + 附件 + OSS 文件
+     - 频道写操作末尾 `hub.BroadcastToClass(classID, class.invalidate{targets:[channels], reason:channel_*})`
+     - 消息写操作末尾 `hub.BroadcastToClass(classID, channel.message.created/updated/deleted)` —— 完整 MessageDTO 直接进 WS 帧,前端无需重拉
+     - 附件 OSS key 格式 `channels/<channelID>/<random><ext>`;消息删 / 频道删 / 班删时联带删 OSS
+   - [handler.go](internal/channel/handler.go) + [route.go](internal/channel/route.go):10 个端点
+     - `GET / POST /api/classes/:classId/channels`
+     - `GET / PATCH / DELETE /api/classes/:classId/channels/:channelId`
+     - `GET / POST /api/channels/:channelId/messages`(GET 支持 `?before=<msgId>&limit=50`)
+     - `PATCH / DELETE /api/channels/:channelId/messages/:messageId`
+     - `POST /api/channels/:channelId/attachments`(multipart `files`)
+     - `GET /api/channels/:channelId/attachments/:fileId`
+   - 权限:列频道 / 列消息 / 发消息 / 上传附件 / 拉附件 = 班级成员;编辑消息 = 作者本人;删消息 = 作者本人或班 owner;建 / 改 / 删频道 = owner 或班里 `role=teacher` 的成员;`#general` 改名 / 删 → 400
+
+6. **`internal/class/` 改造邀请链接**(替换原 invite_code)
+   - [model.go](internal/class/model.go):删 `InviteCode`;加 `InviteToken` / `InviteExpiresAt *time.Time` / `InviteDisabled bool`;`DefaultInviteTTL = 30d`;新增 `ChannelHook` 接口(Go 隐式实现,channel.Service 自动满足)
+   - [service.go](internal/class/service.go):
+     - `JoinByInviteCode` → `JoinByInviteToken`,加过期 + 禁用闸
+     - 新增 `GetInvite` / `RegenerateInvite` / `DisableInvite` / `PreviewInvite`
+     - `Create` 末尾调 `channelHook.OnClassCreated`(建 #general)+ `hub.AddUserToClass(owner, classID)`
+     - `Delete` 调 `channelHook.OnClassDeleted` + 给所有成员 `SendToUsers(class.invalidate{reason:class_deleted})` + 批量 `RemoveUserFromClass` 解绑 WS
+     - `Leave` / `RemoveMember` 成功后 `hub.RemoveUserFromClass`
+     - 第 14 轮的 `class.EventHub` 替换为 `realtime.Hub`,`emit(...)` 改成 `hub.SendToUsers(...)`
+   - 邀请 token:`crypto/rand` 24 字节 → base64url 32 字符;`ShareURL = APP_BASE_URL + "/invite/" + token`(前端落地页)
+   - 5 个新 invite handler + 路由;`failClassErr` 加 `ErrInviteExpired` / `ErrInviteDisabled` → 410
+
+7. **WebSocket 帧约定**([internal/realtime/model.go](internal/realtime/model.go))
+   - 服务端→客户端:`ready` / `ping` / `class.invalidate` / `channel.message.created` / `channel.message.updated` / `channel.message.deleted`
+   - 客户端→服务端:无业务帧,只走 WS 协议级 ping/pong(浏览器自动响应)
+   - 帧信封统一 JSON,`type` 字段分发;载荷视类型而定
+   - 多 tab 同账号:`byUser` 持多连接,所有 tab 都收到广播
+
+### 修复 / 杂项
+
+8. **删除文件**:`internal/class/eventhub.go`(替代:`internal/realtime/hub.go`)
+9. **Postman 同步**:
+   - 新增 `postman/collections/MechHub Backend/channel/` 目录 —— 10 个 yaml(channel CRUD / messages / attachments)
+   - 改 `postman/collections/MechHub Backend/class/` —— invite 系列 yaml(GetInvite / RegenerateInvite / DisableInvite / PreviewInvite / AcceptInvite)替换原 join,删 events SSE yaml
+   - `.resources/definition.yaml` 加 `channelId` / `messageId` / `inviteToken` / `attachmentId` 占位
+   - `environments/local.environment.yaml` 同步
+10. **隐含规约修订**(未改 CLAUDE.md 文本,下一轮补):
+    - 原"所有流式接口走 SSE"→ 实际是「**AI 流式输出 / 服务端单向 push** 走 SSE,**双向实时推送 / 多端通知**走 WS」
+
+### 验证
+
+`go build ./...` 通过。端到端手测路径见 [plan 文件](~/.claude/plans/miniback-back-silly-sun.md) 「验证(端到端)」段,14 步覆盖:建班自动建 #general → WS upgrade → invite regenerate → preview / accept → 频道 CRUD 广播 → 消息 CRUD 广播 → 附件上传 → #general 删除返 400 → invite 过期 / 禁用 / 重生。
+
+---
+
+## Claude 轮 14 — 2026-05-25 — 班级模块迁移(miniback → back)
+
+### ⚠️ 破坏性变更
+
+1. **班级 API 字段从 camelCase 改成 snake_case,主键改成 UUID 字符串**
+   - 旧 miniback:`{ ownerUserId, membershipRole, isOwner, inviteCode, createdAt }`,整型 ID
+   - 新 back:`{ owner_user_id, membership_role, is_owner, invite_code, created_at }`,UUID(char(36))
+   - 前端切到新后端时要按 snake_case 取字段、把 `classId` / `memberId` 当字符串处理
+
+2. **班级头像不再走 `uploaded_files` 元数据表,改走 OSS key 字段**
+   - 旧 miniback:`POST /classes/:id/avatar` 返回 `{ avatar: { id, fileName, mimeType, sizeBytes, width, height } }`
+   - 新 back:返回的 ClassDetail 里只有 `avatar_url`(stream-through `/api/classes/:id/avatar?v=<hash>`),不再有 width/height/sizeBytes 等元数据
+   - 前端:不要再读 `avatar.fileName` 等字段;直接 `<img src={class.avatar_url}>`
+
+3. **响应统一外壳 `{ code, msg, data }`**
+   - 旧 miniback:`GET /classes` 直接返回数组,`POST /classes` 返回 201,204 表示删除成功
+   - 新 back:全部 200 + `{ code: 0, msg: "成功", data: { classes: [...] } }`(列表) 或 `data: { ... }`(单对象);删除返回 `data: { message: "已删除" }`
+   - 前端:统一从 `response.data.classes` / `response.data` 取数据
+
+### 功能
+
+4. **新模块 `internal/class/` 落地 14 个 HTTP 端点**
+   - `GET /api/classes` 列班级 / `POST /api/classes` 创建(仅教师) / `POST /api/classes/join` 凭邀请码加入
+   - `GET /api/classes/:classId` 详情 / `PATCH` 更新(仅 owner) / `DELETE` 删除(仅 owner,联带删 members + OSS 头像)
+   - `POST/GET/DELETE /api/classes/:classId/avatar` 头像 CRUD(写入 owner only,读 member only)
+   - `POST /api/classes/:classId/leave` 退出 / `GET /:classId/members` 成员列表 / `PATCH/DELETE /:classId/members/:memberId` 改角色/移除
+   - 新增 [internal/class/{model,repo,service,handler,route,eventhub,invite}.go](internal/class/)
+   - 新增数据表 `classes` + `class_members`,启动期 AutoMigrate 建立;主键 UUID;`(class_id, user_id)` unique 防重复加入
+
+5. **`GET /api/classes/events` SSE 失效事件流**
+   - 内存订阅中枢 [internal/class/eventhub.go](internal/class/eventhub.go),单进程版,buffer 32,满了丢
+   - 写操作(join/leave/update/delete/avatar/改角色/移除)后异步 `EmitToUsers` 推 `class.invalidate` 帧到相关用户
+   - 帧形状:`{ type: "class.invalidate", class_id, targets: ["classes"|"class_detail"|"members"], reason }`,前端按 targets 决定重拉哪些查询
+   - 25s 一行 `: ping\n\n` 心跳;复用 `internal/sseutil/Writer`
+
+6. **小重构:抽出 `internal/sseutil/Writer` 公共 SSE 写帧 helper**
+   - 原 `internal/solochat/streamer.go` 里的 package-private `sseWriter` 提到新包 [internal/sseutil/writer.go](internal/sseutil/writer.go),`Write(any)` + `Heartbeat()` 通用化
+   - solochat 改用 `sseutil.New(c)` / `w.Write(...)` / `w.Heartbeat()`;`writeFrame` 形参从 `*sseWriter` 改 `*sseutil.Writer`
+   - `internal/solochat/streamer.go` 留空 package 头,不删文件避免 git 历史断裂
+
+### 杂项
+
+7. **Postman**:新增 `postman/collections/MechHub Backend/class/` 目录与 14 条 `.request.yaml`;集合根 `variables` 加 `classId` / `memberId` / `inviteCode`;`environments/local.environment.yaml` 同步占位
+8. **不迁移**:assignments(作业)模块、miniback 的 `default_role` / `bio` / `display_name` 用户字段、班级头像的 width/height/sizeBytes 元数据 —— 留后续轮次
+
+---
+
 ## Claude 轮 13 — 2026-05-20 — 对话标题 LLM 自动总结(ChatGPT 风格)
 
 ### ⚠️ 破坏性变更

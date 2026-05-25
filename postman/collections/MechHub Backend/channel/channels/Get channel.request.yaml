@@ -1,0 +1,8 @@
+$kind: http-request
+name: Get channel
+description: 单频道详情。班级成员可调。
+url: "{{baseUrl}}/api/classes/{{classId}}/channels/{{channelId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 6120

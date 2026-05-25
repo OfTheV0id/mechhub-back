@@ -1,0 +1,24 @@
+$kind: http-request
+name: Regenerate invite
+description: |-
+  Owner only. 生成新邀请 token,旧 token 立即失效。body 可选:
+
+
+  - 不带 body / `{}` → 30 天后过期(默认)
+
+  - `{ "expires_at": "" }` → 永不过期
+
+  - `{ "expires_at": "2026-12-31T23:59:59Z" }` → 指定过期时间(RFC3339)
+
+
+  调用后会重置 `disabled=false`。
+url: "{{baseUrl}}/api/classes/{{classId}}/invite/regenerate"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {}
+order: 1310

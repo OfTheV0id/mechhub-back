@@ -1,0 +1,19 @@
+$kind: http-request
+name: Create class
+description: |-
+  创建一个新班级。仅 `user.role == "teacher"` 可调,否则 403。
+  邀请码由后端生成 12 位大写 hex。owner 自动入班为 teacher。
+  description 留空时默认 "这个班级很神秘 什么也没留下"。
+url: "{{baseUrl}}/api/classes"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "高等数学 2026 春",
+      "description": "微积分基础课程"
+    }
+order: 1100

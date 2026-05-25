@@ -1,0 +1,10 @@
+$kind: http-request
+name: Disable invite
+description: |-
+  Owner only. 把当前邀请 token 标为 disabled。继续 GET 该 token 会返回 410。
+  Token 本身不会变 —— owner 调 Regenerate 时会自动重置 disabled。
+url: "{{baseUrl}}/api/classes/{{classId}}/invite"
+method: DELETE
+headers:
+  Accept: application/json
+order: 1320

@@ -1,0 +1,17 @@
+$kind: http-request
+name: List messages
+description: |-
+  倒序游标分页拉频道消息。班级成员可调。Query:
+
+  - `before=<messageId>` 可选 —— 拉早于该消息的;不传从最新开始
+  - `limit=50` 可选 —— 默认 50,最大 200
+
+
+  响应 `messages` 数组按 created_at DESC, id DESC 排列。每条消息已 hydrate
+  author(id/name/email/role/avatar_url)与 attachments(id/original_name/mime_type/
+  size_bytes/url)。
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages?limit=50"
+method: GET
+headers:
+  Accept: application/json
+order: 6200

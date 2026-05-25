@@ -2,3 +2,15 @@ name: local
 values:
   - key: baseUrl
     value: 'http://localhost:8080'
+  - key: classId
+    value: ''
+  - key: memberId
+    value: ''
+  - key: inviteToken
+    value: ''
+  - key: channelId
+    value: ''
+  - key: messageId
+    value: ''
+  - key: channelAttachmentId
+    value: ''

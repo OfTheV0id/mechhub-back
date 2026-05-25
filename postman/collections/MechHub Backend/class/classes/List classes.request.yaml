@@ -1,0 +1,8 @@
+$kind: http-request
+name: List classes
+description: 列出当前用户加入的所有班级(含 owner 创建的)。按 created_at desc 排序。
+url: "{{baseUrl}}/api/classes"
+method: GET
+headers:
+  Accept: application/json
+order: 1000

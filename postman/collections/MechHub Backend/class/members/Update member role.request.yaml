@@ -1,0 +1,18 @@
+$kind: http-request
+name: Update member role
+description: |-
+  修改成员在班级里的角色。仅 owner 可调。owner 自己的角色不可修改(400)。
+  `role` 取 `teacher` 或 `student`。被改成员会收到一帧
+  `class.invalidate` 提示重拉自己的班级数据。
+url: "{{baseUrl}}/api/classes/{{classId}}/members/{{memberId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "role": "teacher"
+    }
+order: 3200

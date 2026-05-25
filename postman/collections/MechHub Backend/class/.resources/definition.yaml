@@ -1,0 +1,22 @@
+$kind: collection
+description: >-
+  班级模块。需要登录(session_id cookie)。
+
+
+  数据模型:`classes` + `class_members`,主键 UUID。班级所有者(owner)
+  自动是教师 member,可改头像 / 修改信息 / 删班 / 改成员角色 / 移除成员 /
+  管理邀请链接。非 owner 成员可退出。任何已加入用户可以查看详情和成员列表。
+  仅教师 (`user.role == "teacher"`) 可创建班级。
+
+
+  **邀请机制(第 15 轮起)**:一班一 token(`crypto/rand` 24 字节 → base64url
+  32 字符),owner 可 regenerate / disable,可设过期时间(默认 30 天,可设为
+  永不过期)。前端分享链接格式 `<APP_BASE_URL>/invite/<token>`。用户点开后:
+  GET `/api/classes/invite/:token` 预览 → POST `/api/classes/invite/:token/accept`
+  入班。
+
+
+  **实时事件(第 15 轮起)**:不再走 SSE,统一到 `GET /api/ws`(WebSocket
+  单连接多复用)。写操作完成后服务端推 `class.invalidate` 帧,前端按 `targets`
+  数组(`classes` / `class_detail` / `members` / `channels`)决定重拉哪些查询。
+order: 4000

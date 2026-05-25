@@ -1,0 +1,23 @@
+$kind: http-request
+name: Accept invite
+description: |-
+  任意登录用户。凭 token 加入班级。新成员角色取自 `user.role`(teacher 入班为
+  teacher,student 入班为 student)。
+
+
+  失败情形:
+  - 409 已加入过该班
+  - 410 邀请已过期 / 已禁用
+  - 404 token 不存在
+
+
+  成功返回 ClassDetail。后端同时:
+  1. 把成员加入 class_members 表
+  2. 调 `hub.AddUserToClass` 让该用户当前活跃的 WS 立刻订阅这个新班
+  3. 给班级其它成员的 WS 推 `class.invalidate reason=member_joined`
+url: "{{baseUrl}}/api/classes/invite/{{inviteToken}}/accept"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+order: 1340

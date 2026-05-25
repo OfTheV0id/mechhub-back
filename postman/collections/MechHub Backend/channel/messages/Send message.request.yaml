@@ -1,0 +1,29 @@
+$kind: http-request
+name: Send message
+description: |-
+  在频道发消息。班级成员可调。最多 5 个附件 / 每条;附件必须先调
+  Upload attachment 拿 id。
+
+
+  body:
+  - `content`(必填,1-4000 字符,trim)
+  - `attachment_ids`(可选,≤5 个,每个必须是当前用户上传到当前频道且尚未绑定的附件 id)
+
+
+  成功后:
+  1. 写 channel_messages 行
+  2. 把附件的 message_id 批量绑定(原子;失败回滚 message)
+  3. WS 广播 `channel.message.created` 到该班所有订阅者(含发件人本人)
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "content": "大家好,这是第一条频道消息 👋",
+      "attachment_ids": []
+    }
+order: 6210

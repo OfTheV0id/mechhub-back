@@ -1,0 +1,11 @@
+$kind: http-request
+name: Delete message
+description: |-
+  硬删消息。权限:作者本人 或 班级 owner。事务里联带删该消息的所有附件
+  (DB 行 + OSS 文件)。成功后 WS 广播 `channel.message.deleted` 帧
+  `{ type, channel_id, class_id, message_id }`。
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages/{{messageId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 6230

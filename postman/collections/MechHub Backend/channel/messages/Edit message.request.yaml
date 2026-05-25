@@ -1,0 +1,18 @@
+$kind: http-request
+name: Edit message
+description: |-
+  编辑消息内容。仅作者本人可编辑。无时间窗口限制(对齐 Discord)。
+  成功后 WS 广播 `channel.message.updated` 帧(完整 MessageDTO,`edited_at`
+  字段被填上当前时间)。
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages/{{messageId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "content": "(已编辑)更新后的消息内容"
+    }
+order: 6220

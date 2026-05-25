@@ -1,0 +1,25 @@
+$kind: http-request
+name: Upgrade WebSocket
+description: |-
+  把 HTTP 升级为 WebSocket。Session cookie 鉴权(浏览器 WS 升级会自动带 cookie)。
+  Postman 的 HTTP request 跑不通 WS 升级(会得到 426 / 502 之类),用 Postman 的
+  WebSocket Request、或 `wscat -c ws://localhost:8080/api/ws --header "Cookie:
+  session_id=<sid>"` 测试。
+
+
+  升级后行为:
+
+
+  1. 服务端立刻发 `{ "type": "ready", "user_id": "...", "class_ids": ["..."] }`
+
+  2. 之后被动接收服务端推送的 `class.invalidate` / `channel.message.created` /
+     `channel.message.updated` / `channel.message.deleted` 帧
+
+  3. 心跳:服务端每 25s 发 WS ping(浏览器自动响应 pong);客户端 60s 无 pong
+     会被服务端清掉
+url: "{{baseUrl}}/api/ws"
+method: GET
+headers:
+  Upgrade: websocket
+  Connection: Upgrade
+order: 5000

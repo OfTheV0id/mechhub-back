@@ -1,0 +1,13 @@
+$kind: http-request
+name: Delete channel
+description: |-
+  删除频道。权限:班级 owner 或班里 role=teacher 的成员。事务里联带删:
+  该频道的所有 messages + attachments(DB 行 + OSS 文件)。
+
+
+  `is_default=true` 的频道(`#general`)→ 400 "默认频道不可删除或改名"。
+url: "{{baseUrl}}/api/classes/{{classId}}/channels/{{channelId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 6140

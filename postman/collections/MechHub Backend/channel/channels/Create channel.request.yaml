@@ -1,0 +1,26 @@
+$kind: http-request
+name: Create channel
+description: |-
+  在班级里新建频道。权限:班级 owner 或班里 role=teacher 的成员。
+  同班同名 → 409。新频道 `is_default=false`。
+
+
+  body 字段:
+  - `name`(必填,1-64 字符,同班 unique)
+  - `description`(可选,≤500 字符)
+  - `topic`(可选,≤120 字符,频道当前话题)
+  - `position`(可选 int,侧边栏排序)
+url: "{{baseUrl}}/api/classes/{{classId}}/channels"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "homework",
+      "description": "作业讨论与答疑",
+      "topic": "本周作业:第三章 1-15 题"
+    }
+order: 6110

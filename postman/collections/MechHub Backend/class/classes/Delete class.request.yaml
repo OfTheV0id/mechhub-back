@@ -1,0 +1,10 @@
+$kind: http-request
+name: Delete class
+description: |-
+  解散班级。仅 owner 可调。事务里联带删除所有 class_members 行,
+  并把班级头像 OSS key 异步删除。所有原成员收到 `class_deleted` 失效事件。
+url: "{{baseUrl}}/api/classes/{{classId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 1500

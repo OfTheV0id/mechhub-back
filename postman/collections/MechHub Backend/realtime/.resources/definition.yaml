@@ -1,0 +1,27 @@
+$kind: collection
+description: >-
+  实时推送通道(第 15 轮新增)。单一 WebSocket 端点 `GET /api/ws`,session
+  cookie 鉴权,升级后服务端推送当前用户的所有班级事件。
+
+
+  Postman 的 HTTP request 跑不通 WS 升级(会得到 426 之类响应),用 Postman
+  Collection 的 WebSocket Request 或外部 `wscat` 测。本目录里只放一个文档型
+  请求作占位。
+
+
+  **帧约定**:服务端→客户端 JSON,统一 `{ "type": "..." }` 信封:
+
+  - `ready` 握手帧,带 `user_id` 和 `class_ids`(连接时用户的所有班级)
+
+  - `class.invalidate` 班级 / 成员 / 频道列表失效,前端按 `targets` 重拉
+
+  - `channel.message.created` / `channel.message.updated` / `channel.message.deleted`
+    —— 完整 MessageDTO 直接在 WS 帧里,前端不必再 fetch
+
+  - WS 协议级 ping/pong:服务端每 25s 发 ping,浏览器自动 pong;客户端 60s
+    无 pong 会被踢
+
+
+  **多 tab**:同账号在多个 tab 都连 WS 时,服务端的 `byUser` 索引持多连接,
+  每个 tab 都收到广播。
+order: 5000

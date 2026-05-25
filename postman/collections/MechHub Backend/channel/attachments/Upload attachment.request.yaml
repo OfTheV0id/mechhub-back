@@ -1,0 +1,23 @@
+$kind: http-request
+name: Upload attachment
+description: |-
+  上传频道附件。班级成员可调。Multipart 字段名 `files`(可多文件,≤5 个,
+  单文件 ≤20 MiB)。响应:`{ attachments: [{ id, original_name, mime_type,
+  size_bytes, url }] }`。
+
+
+  上传后附件 message_id 为 NULL;调 Send message 时传 `attachment_ids` 才会被
+  原子绑定到具体消息上。孤儿附件(上传但未发出)留作未来 TTL 清扫,可重复使用。
+url: "{{baseUrl}}/api/channels/{{channelId}}/attachments"
+method: POST
+headers:
+  Accept: application/json
+body:
+  type: formdata
+  content:
+    - type: file
+      key: files
+      src: ""
+      description: 频道附件(≤5 个文件,单文件 ≤20 MiB)
+      disabled: false
+order: 6300
