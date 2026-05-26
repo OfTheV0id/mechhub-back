@@ -65,10 +65,23 @@ type PageResult struct {
 	NeedsHumanReview    bool           `json:"needsHumanReview"`
 }
 
+// ImageRef 由服务端在 grader 调完 Gemini 之后回填,记录本次批改实际
+// 输入的每张图片。前端拿 ImageRefs 直接渲染 OCR 详情页,不再依赖
+// "上一条用户消息的 attachments" 这种隐式位置耦合。
+type ImageRef struct {
+	Index        int    `json:"index"`
+	AttachmentID string `json:"attachmentId"`
+	OriginalName string `json:"originalName"`
+	MimeType     string `json:"mimeType"`
+	URL          string `json:"url"`
+}
+
 type GradingOutput struct {
 	OverallScore   float64      `json:"overallScore"`
 	OverallComment string       `json:"overallComment"`
 	Pages          []PageResult `json:"pages"`
+	// ImageRefs 不在 Gemini 的 ResponseSchema 中,由服务端回填。
+	ImageRefs []ImageRef `json:"imageRefs,omitempty"`
 }
 
 // Schema 返回 Gemini structured-output 需要的 *genai.Schema,字段命名与

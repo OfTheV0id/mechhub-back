@@ -8,10 +8,16 @@ import (
 // CachedImage holds image data in memory for the duration of a single
 // SendMessageStream call, so OCR / grading tools receive image bytes
 // directly without temp files or LLM-path-copying.
+//
+// AttachmentID / URL 让工具调用结果(如 grade_with_ocr 的 ImageRefs)
+// 能直接回带图片的稳定引用,前端无需再靠"上一条消息的 attachments"
+// 这种位置耦合去倒推图片来源。
 type CachedImage struct {
-	Data     []byte
-	MimeType string
-	OrigName string
+	Data         []byte
+	MimeType     string
+	OrigName     string
+	AttachmentID string
+	URL          string
 }
 
 var (

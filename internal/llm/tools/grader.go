@@ -56,7 +56,23 @@ func runGrade(tctx tool.Context, args GraderArgs) (schemas.GradingOutput, error)
 	if !ok {
 		return schemas.GradingOutput{}, fmt.Errorf("OCR 缓存未命中:请先用相同的 image_indices 调用 ocr_images_cached,再调本工具")
 	}
-	return callGeminiGrader(tctx, imgs, hit)
+	out, err := callGeminiGrader(tctx, imgs, hit)
+	if err != nil {
+		return out, err
+	}
+	// 回填图片引用,前端据此直接渲染 OCR 详情页,无需根据"上一条消息"推导。
+	refs := make([]schemas.ImageRef, len(imgs))
+	for i, img := range imgs {
+		refs[i] = schemas.ImageRef{
+			Index:        args.ImageIndices[i],
+			AttachmentID: img.AttachmentID,
+			OriginalName: img.OrigName,
+			MimeType:     img.MimeType,
+			URL:          img.URL,
+		}
+	}
+	out.ImageRefs = refs
+	return out, nil
 }
 
 func callGeminiGrader(ctx context.Context, images []CachedImage, ocr *OCRDocument) (schemas.GradingOutput, error) {

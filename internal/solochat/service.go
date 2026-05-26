@@ -561,7 +561,13 @@ func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, 
 		switch {
 		case imageMimes[mime]:
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}})
-			cachedImages = append(cachedImages, tools.CachedImage{Data: data, MimeType: mime, OrigName: f.OriginalName})
+			cachedImages = append(cachedImages, tools.CachedImage{
+				Data:         data,
+				MimeType:     mime,
+				OrigName:     f.OriginalName,
+				AttachmentID: f.ID,
+				URL:          s.AttachmentURL(f.ID),
+			})
 			imageIndices = append(imageIndices, fmt.Sprintf("[%d] %s", i, f.OriginalName))
 		case mime == "application/pdf":
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{Data: data, MIMEType: mime}})
