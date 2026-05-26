@@ -1,7 +1,7 @@
 $kind: http-request
 name: Remove member
-description: 把成员踢出班级。仅 owner 可调。owner 自己不能用此 API 移除(400)。被移除用户收到失效事件。
-url: "{{baseUrl}}/api/classes/{{classId}}/members/{{memberId}}"
+description: 把成员踢出班级。仅 owner 可调。owner 自己不能用此 API 移除(400)。被移除用户收到失效事件。URL 参数是 `user_id`(不是 class_members 行 PK)。
+url: "{{baseUrl}}/api/classes/{{classId}}/members/{{userId}}"
 method: DELETE
 headers:
   Accept: application/json

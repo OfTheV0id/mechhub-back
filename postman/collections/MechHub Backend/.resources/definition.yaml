@@ -41,7 +41,6 @@ variables:
   attachmentId: ""
   userId: ""
   classId: ""
-  memberId: ""
   inviteToken: ""
   channelId: ""
   messageId: ""

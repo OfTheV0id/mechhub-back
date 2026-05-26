@@ -9,6 +9,48 @@
 
 ---
 
+## Claude 轮 17 — 2026-05-26 — 取消「班内角色」概念,成员 DTO 扁平化
+
+「班内角色」从概念里完全删除 —— 用户的账号 `role` 就是唯一身份。所以 `class_members.role`、`UpdateMemberRole` 端点、`MembershipRole` 字段全部下线;成员路由用 `user_id`,班级模块只有一种成员标识。
+
+### ⚠️ 破坏性变更
+
+1. **删除端点 `PATCH /api/classes/:classId/members/:memberId`**(改成员角色)。班级里没有「成员的班内角色」,要改用户身份去 user 域做(没有这个 API)。
+2. **`DELETE /api/classes/:classId/members/:memberId` → `DELETE /api/classes/:classId/members/:userId`** —— URL 参数从 class_members 行 PK 改成 user_id。前端把 `member.id` 替换成 `member.user_id`。
+3. **`GET /api/classes/:id/members` 响应扁平化**:
+   - 旧:`{ id, class_id, role, is_owner, joined_at, user: { id, email, name, role, avatar_url } }`
+   - 新:`{ user_id, name, email, role, avatar_url, joined_at }`
+   - 删字段:`id` / `class_id` / `is_owner`(`user_id === class.owner_user_id` 推);嵌套 `user.*` 全部拍平
+   - `role` 现在就是用户账号角色,没有「班内角色」
+4. **`ClassDTO.membership_role` 删除**。`/api/classes` 和 `/api/classes/:id` 响应不再含该字段。
+5. **`class_members.role` 列已 drop**(本轮 ALTER 执行,DB 兼容)。
+
+### 杂项
+
+- `realtime.ReasonMemberRoleUpdated` 常量删(再没人发)。
+- `class.ErrOwnerRoleImmutable` 错误码删。
+- `channel/service.go::requireChannelAdmin` 改为查 user.role 而不是已废弃的 `Member.Role`。
+
+---
+
+## Claude 轮 16 — 2026-05-26 — 班级响应 DTO 收敛 + drop invite_code 列
+
+### ⚠️ 破坏性变更
+
+1. **班级响应统一为 `ClassDTO`**(`ClassListItem` / `ClassDetail` 合并)。
+   - `GET /api/classes`(列表)和 `GET /api/classes/:id`(详情)返回**完全相同**的形状,列表不再缺字段,前端不需要再调详情。
+   - **去掉字段:`status` / `is_owner`**。`status` 当前没有 archived 流程,删字段不丢任何信息;`is_owner` 用 `owner_user_id === currentUserId` 自己算。
+   - `POST /api/classes` / `PATCH /api/classes/:id` / `POST /api/classes/:id/avatar` / `POST /api/classes/invite/:token/accept` 的成功响应也是 `ClassDTO`。
+   - `GET /api/classes/invite/:token` 预览里的 `class` 字段同步变成 `ClassDTO`。
+2. **`PATCH /api/classes/:id` 不再接受 `status` 字段**(前端如有传请删掉)。
+3. **`classes.invite_code` 列已 drop**(本轮通过一次性 ALTER 执行,DB 兼容)。
+
+### 杂项
+
+- `internal/class/model.go::Class.Status` 字段保留(DB 兼容 + 后续 archived 流程预留),只是不再外露。
+
+---
+
 ## Claude 轮 15 — 2026-05-25 — Discord 频道化 + 邀请链接 + WebSocket 实时(班级第 2 阶段)
 
 把班级从「组织容器」拓展成「Discord 服务器」式的多频道讨论空间:新模块 `internal/channel/`(频道 + 消息 + 附件),新模块 `internal/realtime/`(WebSocket 单连接多路复用),`internal/class/` 改造邀请链接 + 装配 channel hook。本轮**吃下 3 处破坏性变更**,见 ⚠️。

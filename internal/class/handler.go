@@ -71,7 +71,7 @@ func (h *Handler) UpdateClass(c *gin.Context) {
 		response.Fail(c, 400, response.CodeBadRequest, err.Error())
 		return
 	}
-	if req.Name == nil && req.Description == nil && req.Status == nil {
+	if req.Name == nil && req.Description == nil {
 		response.Fail(c, 400, response.CodeBadRequest, "至少提供一个可更新字段")
 		return
 	}
@@ -232,24 +232,9 @@ func (h *Handler) ListMembers(c *gin.Context) {
 	response.OK(c, gin.H{"members": members})
 }
 
-func (h *Handler) UpdateMemberRole(c *gin.Context) {
-	var req UpdateMemberRoleReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, err.Error())
-		return
-	}
-	uid := c.MustGet(middleware.CtxUserID).(string)
-	dto, err := h.svc.UpdateMemberRole(c.Request.Context(), c.Param("classId"), uid, c.Param("memberId"), req.Role)
-	if err != nil {
-		h.failClassErr(c, err)
-		return
-	}
-	response.OK(c, dto)
-}
-
 func (h *Handler) RemoveMember(c *gin.Context) {
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	if err := h.svc.RemoveMember(c.Request.Context(), c.Param("classId"), uid, c.Param("memberId")); err != nil {
+	if err := h.svc.RemoveMember(c.Request.Context(), c.Param("classId"), uid, c.Param("userId")); err != nil {
 		h.failClassErr(c, err)
 		return
 	}
@@ -274,8 +259,6 @@ func (h *Handler) failClassErr(c *gin.Context, err error) {
 		response.Fail(c, 410, response.CodeBadRequest, "邀请链接已失效")
 	case errors.Is(err, ErrOwnerCannotLeave):
 		response.Fail(c, 400, response.CodeBadRequest, "班级所有者不能退出/被移除,请改用删除班级")
-	case errors.Is(err, ErrOwnerRoleImmutable):
-		response.Fail(c, 400, response.CodeBadRequest, "班级所有者角色不可修改")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}

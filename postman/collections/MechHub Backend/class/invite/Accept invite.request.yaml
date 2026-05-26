@@ -11,7 +11,7 @@ description: |-
   - 404 token 不存在
 
 
-  成功返回 ClassDetail。后端同时:
+  成功返回 ClassDTO。后端同时:
   1. 把成员加入 class_members 表
   2. 调 `hub.AddUserToClass` 让该用户当前活跃的 WS 立刻订阅这个新班
   3. 给班级其它成员的 WS 推 `class.invalidate reason=member_joined`

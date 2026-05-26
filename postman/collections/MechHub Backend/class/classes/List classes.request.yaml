@@ -1,6 +1,10 @@
 $kind: http-request
 name: List classes
-description: 列出当前用户加入的所有班级(含 owner 创建的)。按 created_at desc 排序。
+description: |-
+  列出当前用户加入的所有班级(含 owner 创建的)。按 created_at desc 排序。
+  响应形状与 `GET /api/classes/:id` 详情完全一致(`ClassDTO`),
+  含 `description` / `owner_user_id` / `created_at` 等完整字段,前端不需要
+  再发详情请求。
 url: "{{baseUrl}}/api/classes"
 method: GET
 headers:

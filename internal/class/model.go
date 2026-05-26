@@ -3,8 +3,6 @@ package class
 import (
 	"context"
 	"time"
-
-	"mechhub-back/internal/user"
 )
 
 type Class struct {
@@ -16,7 +14,6 @@ type Class struct {
 	AvatarKey   string    `gorm:"type:varchar(255)"`
 
 	// 邀请链接(第 2 阶段):一班一 token,可重生成,可设过期,可禁用。
-	// InviteCode 已废弃 —— 列保留在 DB 直到 ALTER 一次性 drop,但代码不再读写。
 	InviteToken     string     `gorm:"type:varchar(64);uniqueIndex"`
 	InviteExpiresAt *time.Time `gorm:""`
 	InviteDisabled  bool       `gorm:"not null;default:false"`
@@ -30,7 +27,6 @@ type Member struct {
 	ID       string    `gorm:"primaryKey;type:char(36)"`
 	ClassID  string    `gorm:"type:char(36);not null;uniqueIndex:idx_class_user,priority:1;index:idx_member_class"`
 	UserID   string    `gorm:"type:char(36);not null;uniqueIndex:idx_class_user,priority:2;index:idx_member_user"`
-	Role     string    `gorm:"type:varchar(16);not null"`
 	JoinedAt time.Time `gorm:"not null"`
 }
 
@@ -39,9 +35,6 @@ func (Member) TableName() string { return "class_members" }
 const (
 	StatusActive   = "active"
 	StatusArchived = "archived"
-
-	RoleTeacher = user.UserRoleTeacher
-	RoleStudent = user.UserRoleStudent
 
 	// 邀请 token 默认有效期。可被 RegenerateInvite 的 expires_at 参数覆盖;
 	// 显式传 null 表示永不过期。
@@ -53,12 +46,6 @@ const (
 type ChannelHook interface {
 	OnClassCreated(ctx context.Context, classID, ownerID string) error
 	OnClassDeleted(ctx context.Context, classID string) error
-}
-
-// 班级详情 + 当前用户成员关系 join 行
-type ClassWithRole struct {
-	Class
-	MembershipRole string `gorm:"column:membership_role"`
 }
 
 type MemberWithUser struct {
@@ -80,7 +67,6 @@ type CreateClassReq struct {
 type UpdateClassReq struct {
 	Name        *string `json:"name,omitempty"        binding:"omitempty,min=1,max=120"`
 	Description *string `json:"description,omitempty" binding:"omitempty,max=1000"`
-	Status      *string `json:"status,omitempty"      binding:"omitempty,oneof=active archived"`
 }
 
 // RegenerateInviteReq POST /classes/:id/invite/regenerate 的可选 body。
@@ -90,48 +76,28 @@ type RegenerateInviteReq struct {
 	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
-type UpdateMemberRoleReq struct {
-	Role string `json:"role" binding:"required,oneof=teacher student"`
-}
-
 // ============ Response DTOs ============
 
-type ClassListItem struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	MembershipRole string `json:"membership_role"`
-	IsOwner        bool   `json:"is_owner"`
-	AvatarURL      string `json:"avatar_url,omitempty"`
-}
-
-type ClassDetail struct {
+// ClassDTO 列表与详情共用同一形状,前端用 owner_user_id == 当前用户 id 推导是否是 owner。
+type ClassDTO struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	Description    string `json:"description"`
 	OwnerUserID    string `json:"owner_user_id"`
-	Status         string `json:"status"`
 	MembershipRole string `json:"membership_role"`
-	IsOwner        bool   `json:"is_owner"`
 	AvatarURL      string `json:"avatar_url,omitempty"`
 	CreatedAt      string `json:"created_at"`
 }
 
+// MemberDTO 扁平形状。前端用 `user_id === class.owner_user_id` 推导是否是 owner。
+// `role` 是用户账号角色,不存在「班内角色」的概念。
 type MemberDTO struct {
-	ID       string         `json:"id"`
-	ClassID  string         `json:"class_id"`
-	Role     string         `json:"role"`
-	IsOwner  bool           `json:"is_owner"`
-	JoinedAt string         `json:"joined_at"`
-	User     MemberUserInfo `json:"user"`
-}
-
-type MemberUserInfo struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
+	UserID    string `json:"user_id"`
 	Name      string `json:"name"`
+	Email     string `json:"email"`
 	Role      string `json:"role"`
 	AvatarURL string `json:"avatar_url,omitempty"`
+	JoinedAt  string `json:"joined_at"`
 }
 
 // InviteInfo owner 拿当前 invite 状态用
@@ -145,8 +111,8 @@ type InviteInfo struct {
 
 // InvitePreview 任意登录用户 GET /classes/invite/:token 的响应
 type InvitePreview struct {
-	Class    ClassDetail `json:"class"`
-	Joined   bool        `json:"joined"`
-	Expired  bool        `json:"expired"`
-	Disabled bool        `json:"disabled"`
+	Class    ClassDTO `json:"class"`
+	Joined   bool     `json:"joined"`
+	Expired  bool     `json:"expired"`
+	Disabled bool     `json:"disabled"`
 }

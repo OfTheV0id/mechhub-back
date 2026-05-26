@@ -1,6 +1,9 @@
 $kind: http-request
 name: Get class detail
-description: 获取班级完整信息。仅班级成员可调。返回 `membership_role` / `is_owner` 反映当前用户视角。
+description: |-
+  获取班级完整信息。仅班级成员可调。响应形状与 `GET /api/classes`
+  列表项完全一致(`ClassDTO`)。前端用 `owner_user_id === currentUserId`
+  推导「是否是 owner」。
 url: "{{baseUrl}}/api/classes/{{classId}}"
 method: GET
 headers:

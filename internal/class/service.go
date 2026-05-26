@@ -24,7 +24,6 @@ var (
 	ErrNotTeacher           = errors.New("class: not a teacher")
 	ErrAlreadyJoined        = errors.New("class: already joined")
 	ErrOwnerCannotLeave     = errors.New("class: owner cannot leave")
-	ErrOwnerRoleImmutable   = errors.New("class: owner role immutable")
 	ErrInviteExpired        = errors.New("class: invite expired")
 	ErrInviteDisabled       = errors.New("class: invite disabled")
 	ErrInviteRetryExhausted = errors.New("class: invite generation failed")
@@ -45,24 +44,24 @@ func NewService(repo *Repo, userRepo *user.Repo, oss *storage.OSS, hub *realtime
 
 // ============ 读 ============
 
-func (s *Service) ListForUser(ctx context.Context, userID string) ([]ClassListItem, error) {
+func (s *Service) ListForUser(ctx context.Context, userID string) ([]ClassDTO, error) {
 	rows, err := s.repo.ListForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ClassListItem, 0, len(rows))
+	out := make([]ClassDTO, 0, len(rows))
 	for i := range rows {
-		out = append(out, s.toListItem(&rows[i], userID))
+		out = append(out, s.toDTO(&rows[i]))
 	}
 	return out, nil
 }
 
-func (s *Service) GetForUser(ctx context.Context, classID, userID string) (*ClassDetail, error) {
+func (s *Service) GetForUser(ctx context.Context, classID, userID string) (*ClassDTO, error) {
 	row, err := s.repo.GetForUser(ctx, classID, userID)
 	if err != nil {
 		return nil, err
 	}
-	d := s.toDetail(row, userID)
+	d := s.toDTO(row)
 	return &d, nil
 }
 
@@ -77,14 +76,14 @@ func (s *Service) ListMembers(ctx context.Context, classID, userID string) ([]Me
 	}
 	out := make([]MemberDTO, 0, len(members))
 	for i := range members {
-		out = append(out, s.toMemberDTO(&members[i], row.OwnerUserID))
+		out = append(out, s.toMemberDTO(&members[i]))
 	}
 	return out, nil
 }
 
 // ============ 写 ============
 
-func (s *Service) Create(ctx context.Context, ownerUserID, name, description string) (*ClassDetail, error) {
+func (s *Service) Create(ctx context.Context, ownerUserID, name, description string) (*ClassDTO, error) {
 	u, err := s.userRepo.FindByID(ctx, ownerUserID)
 	if err != nil {
 		return nil, err
@@ -129,12 +128,10 @@ func (s *Service) Create(ctx context.Context, ownerUserID, name, description str
 		return nil, ErrInviteRetryExhausted
 	}
 
-	// owner 自动入班为 teacher
 	if err := s.repo.InsertMember(ctx, &Member{
 		ID:       uuid.NewString(),
 		ClassID:  c.ID,
 		UserID:   ownerUserID,
-		Role:     RoleTeacher,
 		JoinedAt: time.Now(),
 	}); err != nil {
 		return nil, err
@@ -154,15 +151,14 @@ func (s *Service) Create(ctx context.Context, ownerUserID, name, description str
 	if err != nil {
 		return nil, err
 	}
-	d := s.toDetail(row, ownerUserID)
+	d := s.toDTO(row)
 	return &d, nil
 }
 
 // JoinByInviteToken 凭分享链接里的 token 加入班级。
 // 4 道闸:token 存在 / 班级 active / 邀请未禁用 / 邀请未过期。
-func (s *Service) JoinByInviteToken(ctx context.Context, userID, token string) (*ClassDetail, error) {
-	u, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil {
+func (s *Service) JoinByInviteToken(ctx context.Context, userID, token string) (*ClassDTO, error) {
+	if _, err := s.userRepo.FindByID(ctx, userID); err != nil {
 		return nil, err
 	}
 	c, err := s.repo.FindByInviteToken(ctx, strings.TrimSpace(token))
@@ -186,7 +182,6 @@ func (s *Service) JoinByInviteToken(ctx context.Context, userID, token string) (
 		ID:       uuid.NewString(),
 		ClassID:  c.ID,
 		UserID:   userID,
-		Role:     u.Role,
 		JoinedAt: time.Now(),
 	}
 	if err := s.repo.InsertMember(ctx, m); err != nil {
@@ -203,7 +198,7 @@ func (s *Service) JoinByInviteToken(ctx context.Context, userID, token string) (
 	if err != nil {
 		return nil, err
 	}
-	d := s.toDetail(row, userID)
+	d := s.toDTO(row)
 	return &d, nil
 }
 
@@ -214,12 +209,11 @@ func (s *Service) PreviewInvite(ctx context.Context, userID, token string) (*Inv
 		return nil, err
 	}
 	preview := &InvitePreview{
-		Class: ClassDetail{
+		Class: ClassDTO{
 			ID:          c.ID,
 			Name:        c.Name,
 			Description: c.Description,
 			OwnerUserID: c.OwnerUserID,
-			Status:      c.Status,
 			AvatarURL:   s.AvatarURL(c.ID, c.AvatarKey),
 			CreatedAt:   c.CreatedAt.Format(time.RFC3339),
 		},
@@ -306,7 +300,7 @@ func (s *Service) DisableInvite(ctx context.Context, classID, userID string) err
 	return s.repo.UpdateInvite(ctx, classID, c.InviteToken, c.InviteExpiresAt, true)
 }
 
-func (s *Service) Update(ctx context.Context, classID, userID string, req UpdateClassReq) (*ClassDetail, error) {
+func (s *Service) Update(ctx context.Context, classID, userID string, req UpdateClassReq) (*ClassDTO, error) {
 	row, err := s.repo.GetForUser(ctx, classID, userID)
 	if err != nil {
 		return nil, err
@@ -321,11 +315,8 @@ func (s *Service) Update(ctx context.Context, classID, userID string, req Update
 	if req.Description != nil {
 		updates["description"] = strings.TrimSpace(*req.Description)
 	}
-	if req.Status != nil {
-		updates["status"] = *req.Status
-	}
 	if len(updates) == 0 {
-		d := s.toDetail(row, userID)
+		d := s.toDTO(row)
 		return &d, nil
 	}
 	if err := s.repo.UpdateClass(ctx, classID, updates); err != nil {
@@ -337,7 +328,7 @@ func (s *Service) Update(ctx context.Context, classID, userID string, req Update
 	if err != nil {
 		return nil, err
 	}
-	d := s.toDetail(updated, userID)
+	d := s.toDTO(updated)
 	return &d, nil
 }
 
@@ -394,46 +385,7 @@ func (s *Service) Leave(ctx context.Context, classID, userID string) error {
 	return nil
 }
 
-func (s *Service) UpdateMemberRole(ctx context.Context, classID, userID, memberID, role string) (*MemberDTO, error) {
-	row, err := s.repo.GetForUser(ctx, classID, userID)
-	if err != nil {
-		return nil, err
-	}
-	if row.OwnerUserID != userID {
-		return nil, ErrForbidden
-	}
-	m, err := s.repo.FindMemberByID(ctx, classID, memberID)
-	if err != nil {
-		return nil, err
-	}
-	if m.UserID == row.OwnerUserID {
-		return nil, ErrOwnerRoleImmutable
-	}
-	if err := s.repo.UpdateMemberRole(ctx, memberID, role); err != nil {
-		return nil, err
-	}
-	go s.emit(ctx, classID, []string{realtime.TargetMembers}, realtime.ReasonMemberRoleUpdated, []string{m.UserID, userID})
-	s.hub.SendToUsers([]string{m.UserID}, realtime.ClassInvalidate{
-		Type:    realtime.FrameClassInvalidate,
-		ClassID: classID,
-		Targets: []string{realtime.TargetClasses, realtime.TargetClassDetail, realtime.TargetMembers},
-		Reason:  realtime.ReasonMemberRoleUpdated,
-	})
-
-	members, err := s.repo.ListMembers(ctx, classID, row.OwnerUserID)
-	if err != nil {
-		return nil, err
-	}
-	for i := range members {
-		if members[i].ID == memberID {
-			dto := s.toMemberDTO(&members[i], row.OwnerUserID)
-			return &dto, nil
-		}
-	}
-	return nil, ErrNotFound
-}
-
-func (s *Service) RemoveMember(ctx context.Context, classID, userID, memberID string) error {
+func (s *Service) RemoveMember(ctx context.Context, classID, userID, targetUserID string) error {
 	row, err := s.repo.GetForUser(ctx, classID, userID)
 	if err != nil {
 		return err
@@ -441,19 +393,18 @@ func (s *Service) RemoveMember(ctx context.Context, classID, userID, memberID st
 	if row.OwnerUserID != userID {
 		return ErrForbidden
 	}
-	m, err := s.repo.FindMemberByID(ctx, classID, memberID)
-	if err != nil {
-		return err
-	}
-	if m.UserID == row.OwnerUserID {
+	if targetUserID == row.OwnerUserID {
 		return ErrOwnerCannotLeave
 	}
-	if err := s.repo.DeleteMember(ctx, classID, memberID); err != nil {
+	if _, err := s.repo.FindMembership(ctx, classID, targetUserID); err != nil {
 		return err
 	}
-	s.hub.RemoveUserFromClass(m.UserID, classID)
+	if err := s.repo.DeleteMembership(ctx, classID, targetUserID); err != nil {
+		return err
+	}
+	s.hub.RemoveUserFromClass(targetUserID, classID)
 	go s.emit(ctx, classID, []string{realtime.TargetMembers}, realtime.ReasonMemberRemoved, []string{userID})
-	s.hub.SendToUsers([]string{m.UserID}, realtime.ClassInvalidate{
+	s.hub.SendToUsers([]string{targetUserID}, realtime.ClassInvalidate{
 		Type:    realtime.FrameClassInvalidate,
 		ClassID: classID,
 		Targets: []string{realtime.TargetClasses, realtime.TargetClassDetail, realtime.TargetMembers},
@@ -464,7 +415,7 @@ func (s *Service) RemoveMember(ctx context.Context, classID, userID, memberID st
 
 // ============ 头像 ============
 
-func (s *Service) UploadAvatar(ctx context.Context, classID, userID string, body io.Reader, contentType, ext string) (*ClassDetail, error) {
+func (s *Service) UploadAvatar(ctx context.Context, classID, userID string, body io.Reader, contentType, ext string) (*ClassDTO, error) {
 	row, err := s.repo.GetForUser(ctx, classID, userID)
 	if err != nil {
 		return nil, err
@@ -494,7 +445,7 @@ func (s *Service) UploadAvatar(ctx context.Context, classID, userID string, body
 	if err != nil {
 		return nil, err
 	}
-	d := s.toDetail(updated, userID)
+	d := s.toDTO(updated)
 	return &d, nil
 }
 
@@ -551,45 +502,25 @@ func (s *Service) userAvatarURL(userID, key string) string {
 	return s.cfg.App.BackendBaseURL + "/api/user/avatar/" + userID + "?v=" + cacheBust(key)
 }
 
-func (s *Service) toListItem(row *ClassWithRole, currentUserID string) ClassListItem {
-	return ClassListItem{
-		ID:             row.ID,
-		Name:           row.Name,
-		Status:         row.Status,
-		MembershipRole: row.MembershipRole,
-		IsOwner:        row.OwnerUserID == currentUserID,
-		AvatarURL:      s.AvatarURL(row.ID, row.AvatarKey),
+func (s *Service) toDTO(row *Class) ClassDTO {
+	return ClassDTO{
+		ID:          row.ID,
+		Name:        row.Name,
+		Description: row.Description,
+		OwnerUserID: row.OwnerUserID,
+		AvatarURL:   s.AvatarURL(row.ID, row.AvatarKey),
+		CreatedAt:   row.CreatedAt.Format(time.RFC3339),
 	}
 }
 
-func (s *Service) toDetail(row *ClassWithRole, currentUserID string) ClassDetail {
-	return ClassDetail{
-		ID:             row.ID,
-		Name:           row.Name,
-		Description:    row.Description,
-		OwnerUserID:    row.OwnerUserID,
-		Status:         row.Status,
-		MembershipRole: row.MembershipRole,
-		IsOwner:        row.OwnerUserID == currentUserID,
-		AvatarURL:      s.AvatarURL(row.ID, row.AvatarKey),
-		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-	}
-}
-
-func (s *Service) toMemberDTO(row *MemberWithUser, ownerUserID string) MemberDTO {
+func (s *Service) toMemberDTO(row *MemberWithUser) MemberDTO {
 	return MemberDTO{
-		ID:       row.ID,
-		ClassID:  row.ClassID,
-		Role:     row.Role,
-		IsOwner:  row.UserID == ownerUserID,
-		JoinedAt: row.JoinedAt.Format(time.RFC3339),
-		User: MemberUserInfo{
-			ID:        row.UserID,
-			Email:     row.Email,
-			Name:      row.UserName,
-			Role:      row.UserRole,
-			AvatarURL: s.userAvatarURL(row.UserID, row.AvatarKey),
-		},
+		UserID:    row.UserID,
+		Name:      row.UserName,
+		Email:     row.Email,
+		Role:      row.UserRole,
+		AvatarURL: s.userAvatarURL(row.UserID, row.AvatarKey),
+		JoinedAt:  row.JoinedAt.Format(time.RFC3339),
 	}
 }
 

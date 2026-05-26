@@ -1,9 +1,8 @@
 $kind: http-request
 name: Update class
 description: |-
-  更新班级信息(部分更新)。仅 owner 可调。至少提供一个字段。
-  `status` 取 `active` / `archived`。归档后该班级不再接受新成员加入,
-  但现有成员仍可访问。
+  更新班级信息(部分更新)。仅 owner 可调。至少提供一个字段
+  (`name` / `description`)。
 url: "{{baseUrl}}/api/classes/{{classId}}"
 method: PATCH
 headers:
@@ -14,7 +13,6 @@ body:
   content: |-
     {
       "name": "高等数学 2026 春(改名后)",
-      "description": "新描述",
-      "status": "active"
+      "description": "新描述"
     }
 order: 1400

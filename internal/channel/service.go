@@ -474,20 +474,23 @@ func (s *Service) OpenAttachment(ctx context.Context, channelID, fileID, userID 
 
 // ============ helpers ============
 
-// requireChannelAdmin 班级 owner 或 teacher 成员才行。其他人 / 非成员都 403/404。
+// requireChannelAdmin 班级 owner 或 teacher 账号才行。其他人 / 非成员都 403/404。
 func (s *Service) requireChannelAdmin(ctx context.Context, classID, userID string) error {
-	m, err := s.classRepo.FindMembership(ctx, classID, userID)
-	if err != nil {
+	if _, err := s.classRepo.FindMembership(ctx, classID, userID); err != nil {
 		return err
-	}
-	if m.Role == class.RoleTeacher {
-		return nil
 	}
 	c, err := s.classRepo.FindByID(ctx, classID)
 	if err != nil {
 		return err
 	}
 	if c.OwnerUserID == userID {
+		return nil
+	}
+	u, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if u.Role == user.UserRoleTeacher {
 		return nil
 	}
 	return ErrForbidden

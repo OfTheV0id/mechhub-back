@@ -21,17 +21,16 @@ const (
 	TargetMembers     = "members"
 	TargetChannels    = "channels"
 
-	ReasonMemberJoined      = "member_joined"
-	ReasonMemberLeft        = "member_left"
-	ReasonMemberRemoved     = "member_removed"
-	ReasonMemberRoleUpdated = "member_role_updated"
-	ReasonClassUpdated      = "class_updated"
-	ReasonAvatarUpdated     = "avatar_updated"
-	ReasonAvatarRemoved     = "avatar_removed"
-	ReasonClassDeleted      = "class_deleted"
-	ReasonChannelCreated    = "channel_created"
-	ReasonChannelUpdated    = "channel_updated"
-	ReasonChannelDeleted    = "channel_deleted"
+	ReasonMemberJoined   = "member_joined"
+	ReasonMemberLeft     = "member_left"
+	ReasonMemberRemoved  = "member_removed"
+	ReasonClassUpdated   = "class_updated"
+	ReasonAvatarUpdated  = "avatar_updated"
+	ReasonAvatarRemoved  = "avatar_removed"
+	ReasonClassDeleted   = "class_deleted"
+	ReasonChannelCreated = "channel_created"
+	ReasonChannelUpdated = "channel_updated"
+	ReasonChannelDeleted = "channel_deleted"
 )
 
 // ReadyFrame 连接建立后第一帧

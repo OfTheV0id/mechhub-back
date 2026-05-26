@@ -30,6 +30,5 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 
 	authed.POST("/classes/:classId/leave", h.LeaveClass)
 	authed.GET("/classes/:classId/members", h.ListMembers)
-	authed.PATCH("/classes/:classId/members/:memberId", h.UpdateMemberRole)
-	authed.DELETE("/classes/:classId/members/:memberId", h.RemoveMember)
+	authed.DELETE("/classes/:classId/members/:userId", h.RemoveMember)
 }

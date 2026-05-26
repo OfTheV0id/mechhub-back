@@ -57,11 +57,11 @@ func (r *Repo) UpdateInvite(ctx context.Context, classID, token string, expiresA
 	}).Error
 }
 
-func (r *Repo) ListForUser(ctx context.Context, userID string) ([]ClassWithRole, error) {
-	var rows []ClassWithRole
+func (r *Repo) ListForUser(ctx context.Context, userID string) ([]Class, error) {
+	var rows []Class
 	err := r.db.WithContext(ctx).
 		Table("classes AS c").
-		Select("c.*, cm.role AS membership_role").
+		Select("c.*").
 		Joins("INNER JOIN class_members AS cm ON cm.class_id = c.id").
 		Where("cm.user_id = ?", userID).
 		Order("c.created_at DESC, c.id DESC").
@@ -72,11 +72,11 @@ func (r *Repo) ListForUser(ctx context.Context, userID string) ([]ClassWithRole,
 	return rows, nil
 }
 
-func (r *Repo) GetForUser(ctx context.Context, classID, userID string) (*ClassWithRole, error) {
-	var row ClassWithRole
+func (r *Repo) GetForUser(ctx context.Context, classID, userID string) (*Class, error) {
+	var row Class
 	err := r.db.WithContext(ctx).
 		Table("classes AS c").
-		Select("c.*, cm.role AS membership_role").
+		Select("c.*").
 		Joins("INNER JOIN class_members AS cm ON cm.class_id = c.id").
 		Where("c.id = ? AND cm.user_id = ?", classID, userID).
 		First(&row).Error
@@ -150,18 +150,6 @@ func (r *Repo) FindMembership(ctx context.Context, classID, userID string) (*Mem
 	return &m, nil
 }
 
-func (r *Repo) FindMemberByID(ctx context.Context, classID, memberID string) (*Member, error) {
-	var m Member
-	err := r.db.WithContext(ctx).Where("class_id = ? AND id = ?", classID, memberID).First(&m).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
 func (r *Repo) ListMembers(ctx context.Context, classID, ownerUserID string) ([]MemberWithUser, error) {
 	var rows []MemberWithUser
 	err := r.db.WithContext(ctx).
@@ -196,14 +184,6 @@ func (r *Repo) ListMemberUserIDs(ctx context.Context, classID string) ([]string,
 		Where("class_id = ?", classID).
 		Pluck("user_id", &ids).Error
 	return ids, err
-}
-
-func (r *Repo) UpdateMemberRole(ctx context.Context, memberID, role string) error {
-	return r.db.WithContext(ctx).Model(&Member{}).Where("id = ?", memberID).Update("role", role).Error
-}
-
-func (r *Repo) DeleteMember(ctx context.Context, classID, memberID string) error {
-	return r.db.WithContext(ctx).Where("class_id = ? AND id = ?", classID, memberID).Delete(&Member{}).Error
 }
 
 func (r *Repo) DeleteMembership(ctx context.Context, classID, userID string) error {
