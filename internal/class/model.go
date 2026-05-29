@@ -1,4 +1,4 @@
-package class
+﻿package class
 
 import (
 	"context"
@@ -27,6 +27,7 @@ type Member struct {
 	ID       string    `gorm:"primaryKey;type:char(36)"`
 	ClassID  string    `gorm:"type:char(36);not null;uniqueIndex:idx_class_user,priority:1;index:idx_member_class"`
 	UserID   string    `gorm:"type:char(36);not null;uniqueIndex:idx_class_user,priority:2;index:idx_member_user"`
+	Role     string    `gorm:"type:varchar(16);not null;default:'student'"`
 	JoinedAt time.Time `gorm:"not null"`
 }
 

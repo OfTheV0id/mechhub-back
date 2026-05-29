@@ -1,4 +1,4 @@
-package class
+﻿package class
 
 import (
 	"context"
@@ -132,6 +132,7 @@ func (s *Service) Create(ctx context.Context, ownerUserID, name, description str
 		ID:       uuid.NewString(),
 		ClassID:  c.ID,
 		UserID:   ownerUserID,
+		Role:     "teacher",
 		JoinedAt: time.Now(),
 	}); err != nil {
 		return nil, err
@@ -182,6 +183,7 @@ func (s *Service) JoinByInviteToken(ctx context.Context, userID, token string) (
 		ID:       uuid.NewString(),
 		ClassID:  c.ID,
 		UserID:   userID,
+		Role:     "student",
 		JoinedAt: time.Now(),
 	}
 	if err := s.repo.InsertMember(ctx, m); err != nil {
