@@ -9,6 +9,56 @@
 
 ---
 
+## Claude 轮 19 — 2026-05-29 — 分享消息 fork 回 solochat + 浓缩卡片
+
+给频道里的分享消息(批改 / 对话片段)加 **fork** 能力:任何班级成员都能把它**忠实复制**成自己的 solochat 新对话,不触发 AI 生成。基于消息里自包含的快照 + 频道附件重建,不读原 solochat 对话(属分享者),因此非原作者也能 fork。前端配套:对话片段卡片改为浓缩态 + 可展开全屏预览(纯前端)。
+
+### 功能
+
+- **新端点 `POST /api/channels/:channelId/messages/:messageId/fork`**:成员校验后,把该消息的 `reference` 快照 + 绑定的频道附件重建成 fork 用户的 solochat 新对话,返回 `solochat.ConversationDTO`(`{ id, title, created_at, updated_at }`)。
+- `channel.Service.ForkMessageToSolochat`(`internal/channel/fork.go`):把 `MessageReference` + 频道附件映射成 `solochat.SeedSpec`,委托 solochat 重建。
+- `solochat.Service.SeedConversation` + `SeedSpec`(`internal/solochat/seed.go`):建对话(`title_generated=true` 防自动改名)→ OSS 服务端把频道附件**反向拷贝**进本人 `uploaded_files` → 重建 ADK 历史事件;grading 的 `imageRefs` 按 RefKey 回写成新 solochat 附件 id/url,fork 后 OCR 可视化可直接加载。失败补偿:删已建附件行 + OSS 对象 + 对话行。
+- `llm.Service.SeedSession` + `SeedTurn`/`SeedPart`(`internal/llm/seed.go`):经 `sessionSvc.AppendEvent` 直接注入 user/assistant 历史事件(text / tool_use / tool_result),**不经 LLM**;user turn 的附件用 `_solochat_attachments_<inv>` state 绑定,与正常 stream 落盘格式一致,`ListMessages` 能原样还原。
+
+### 功能(对话片段保真)
+
+- **`MessageReference.segments[]` 新增 `parts`**(`SegmentPart{ type, text, name, input, output }`,additive):分享对话片段时忠实保留每条消息的 `text` / `tool_use` / `tool_result`(丢 `thinking`),而非只存纯文本。这样:① 频道里分享的对话若含批改,展开预览能直接「查看可视化分析」;② fork 出来的对话能重建完整工具链。
+- 分享 / fork 时,对话片段里 grading `tool_result` 引用的图片也一并复制(分享→频道附件、fork→solochat 附件)并按 RefKey 回写 `imageRefs`,与单独分享批改一致。`segments[].text` 保留作纯文本兼容 + 浓缩卡片预览;无 `parts` 的老数据回落到 `text`。
+
+### 杂项
+
+- fork 复用现有依赖装配(channel→solochat→llm),`main.go` 无需改动。
+- 已知取舍:assistant 事件 author 用 agent 名(`mechhub_tutor`),grading turn 把 `grade_with_ocr` 的 tool_use + tool_result 放在同一 assistant invocation(与正常批改分组一致);fork 后继续追问时该历史会原样进上下文。
+
+---
+
+## Claude 轮 18 — 2026-05-29 — solochat 批改 / 对话片段分享到频道
+
+新增"把 solochat 的批改结果 / 多条对话片段分享到 class 频道"的能力。复用 `POST /api/channels/:channelId/messages` 端点,请求体新增可选 `share` 字段;后端按 `source_chat_id + source_message_id(s)` **反查 ADK session 自己生成快照**(不信前端传内容,防伪造),并把被引用的 solochat 图片附件**服务端拷贝**成本频道附件,使分享消息自包含、不依赖原 solochat 权限。
+
+### ⚠️ 破坏性变更
+
+1. **`MessageDTO` 新增可选字段 `reference`**(`channel.MessageReference`)。普通消息为 `null`,分享消息为结构化快照:
+   - `reference.type`:`"grading"`(批改)或 `"thread"`(对话片段)
+   - `grading`:完整 `GradingOutput`,其 `imageRefs[].url` 已指向**频道附件** URL(前端可直接喂给 OCR 可视化)
+   - `segments[]`:`{ role, text, attachments[] }`,`attachments[].url` 同为频道附件 URL
+   - 前端 `messageitem` 需在 `message.reference` 非空时渲染富卡片。
+2. **`SendMessageReq` 新增可选字段 `share`**(`ShareRefInput`):`{ type(grading|thread), source_chat_id, source_message_id?, source_message_ids[]? }`。普通发消息不传即可,契约向后兼容(`content` 仍 `required`,分享时前端传附言或默认文案)。
+
+### 功能
+
+- `channel.Service` 注入 `*solochat.Service`,新增 `SendShareMessage` / `copySolochatFilesToChannel`(见 `internal/channel/share.go`)。
+- `storage.OSS.Copy`:同 bucket 服务端拷贝(`CopyObject`),不下载再上传。
+- `solochat.Service.FindFiles`:按 id 拉本人文件元数据(含 OSSKey),供跨模块拷贝。
+- 失败补偿:图片拷贝非事务,任一失败回滚已拷贝的附件行 + OSS 对象;某图已删致数量不符 → 整体拒绝(`400 分享来源无效或图片已不存在`),不静默丢图。
+
+### 杂项
+
+- `channel_messages` 加 `reference` 列(`type:json`,nullable),AutoMigrate 自动加。
+- `Repo.DeleteAttachmentsByIDs`:回滚用。
+
+---
+
 ## Claude 轮 17 — 2026-05-26 — 取消「班内角色」概念,成员 DTO 扁平化
 
 「班内角色」从概念里完全删除 —— 用户的账号 `role` 就是唯一身份。所以 `class_members.role`、`UpdateMemberRole` 端点、`MembershipRole` 字段全部下线;成员路由用 `user_id`,班级模块只有一种成员标识。

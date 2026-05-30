@@ -8,12 +8,20 @@ description: |-
   body:
   - `content`(必填,1-4000 字符,trim)
   - `attachment_ids`(可选,≤5 个,每个必须是当前用户上传到当前频道且尚未绑定的附件 id)
+  - `share`(可选)—— 把 solochat 的批改 / 对话片段分享成富引用消息。后端按
+    source 反查 ADK session 自己生成快照(不信前端传内容),并把被引用的
+    solochat 图片附件服务端拷贝成本频道附件。字段:
+    - `type`:`grading` | `thread`
+    - `source_chat_id`:来源 solochat 对话 id
+    - `source_message_id`:grading 用,含 grade_with_ocr 的那条消息 id
+    - `source_message_ids`:thread 用,勾选的多条消息 id
 
 
   成功后:
-  1. 写 channel_messages 行
-  2. 把附件的 message_id 批量绑定(原子;失败回滚 message)
-  3. WS 广播 `channel.message.created` 到该班所有订阅者(含发件人本人)
+  1. (分享时)先拷贝图片附件,全成功才继续
+  2. 写 channel_messages 行(分享时带 reference 快照 JSON)
+  3. 把附件的 message_id 批量绑定(原子;失败回滚 message + 已拷贝附件)
+  4. WS 广播 `channel.message.created` 到该班所有订阅者(含发件人本人)
 url: "{{baseUrl}}/api/channels/{{channelId}}/messages"
 method: POST
 headers:

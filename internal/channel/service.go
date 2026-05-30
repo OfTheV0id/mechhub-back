@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
-	"mime/multipart"
 	stdmime "mime"
+	"mime/multipart"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
 	"mechhub-back/internal/realtime"
+	"mechhub-back/internal/solochat"
 	"mechhub-back/internal/storage"
 	"mechhub-back/internal/user"
 )
@@ -27,19 +29,21 @@ var (
 	ErrAttachmentInvalid    = errors.New("channel: attachment invalid")
 	ErrTooManyAttachments   = errors.New("channel: too many attachments")
 	ErrAttachmentTooLarge   = errors.New("channel: attachment too large")
+	ErrReactionInvalid      = errors.New("channel: reaction invalid")
 )
 
 type Service struct {
-	repo      *Repo
-	classRepo *class.Repo
-	userRepo  *user.Repo
-	oss       *storage.OSS
-	hub       *realtime.Hub
-	cfg       *config.Config
+	repo        *Repo
+	classRepo   *class.Repo
+	userRepo    *user.Repo
+	solochatSvc *solochat.Service
+	oss         *storage.OSS
+	hub         *realtime.Hub
+	cfg         *config.Config
 }
 
-func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, oss *storage.OSS, hub *realtime.Hub, cfg *config.Config) *Service {
-	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, oss: oss, hub: hub, cfg: cfg}
+func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, solochatSvc *solochat.Service, oss *storage.OSS, hub *realtime.Hub, cfg *config.Config) *Service {
+	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, solochatSvc: solochatSvc, oss: oss, hub: hub, cfg: cfg}
 }
 
 // ============ class.ChannelHook 实现 ============
@@ -267,9 +271,18 @@ func (s *Service) ListMessages(ctx context.Context, channelID, userID, before st
 		attsByMsg[*a.MessageID] = append(attsByMsg[*a.MessageID], a)
 	}
 
+	reactions, err := s.repo.FindReactionsByMessageIDs(ctx, msgIDs)
+	if err != nil {
+		return nil, err
+	}
+	reactionsByMsg := make(map[string][]MessageReaction, len(reactions))
+	for _, rc := range reactions {
+		reactionsByMsg[rc.MessageID] = append(reactionsByMsg[rc.MessageID], rc)
+	}
+
 	out := make([]MessageDTO, 0, len(rows))
 	for i := range rows {
-		out = append(out, s.toMessageDTOWithAuthor(&rows[i], attsByMsg[rows[i].ID]))
+		out = append(out, s.toMessageDTOWithAuthor(&rows[i], attsByMsg[rows[i].ID], reactionsByMsg[rows[i].ID]))
 	}
 	return out, nil
 }
@@ -392,6 +405,60 @@ func (s *Service) DeleteMessage(ctx context.Context, channelID, messageID, userI
 	return nil
 }
 
+// ToggleReaction 切换当前用户对一条消息的某 emoji 反应:有则去、无则加。
+// 重建整条 MessageDTO 并广播 channel.message.updated(reactions 随 DTO 同步,
+// DTO 里反应带 user_ids,各端自行派生 me,故一份广播对所有人都正确)。
+func (s *Service) ToggleReaction(ctx context.Context, channelID, messageID, userID, emoji string) (*MessageDTO, error) {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" || len(emoji) > MaxReactionLen {
+		return nil, ErrReactionInvalid
+	}
+	m, err := s.repo.FindMessage(ctx, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if m.ChannelID != channelID {
+		return nil, ErrNotFound
+	}
+	if _, err := s.classRepo.FindMembership(ctx, m.ClassID, userID); err != nil {
+		return nil, err
+	}
+
+	has, err := s.repo.HasReaction(ctx, messageID, userID, emoji)
+	if err != nil {
+		return nil, err
+	}
+	if has {
+		if _, err := s.repo.RemoveReaction(ctx, messageID, userID, emoji); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.repo.AddReaction(ctx, &MessageReaction{
+			ID:        uuid.NewString(),
+			MessageID: messageID,
+			ChannelID: channelID,
+			ClassID:   m.ClassID,
+			UserID:    userID,
+			Emoji:     emoji,
+			CreatedAt: time.Now(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	dto, err := s.hydrateMessageDTO(ctx, m)
+	if err != nil {
+		return nil, err
+	}
+	go s.hub.BroadcastToClass(m.ClassID, MessageFrame{
+		Type:      realtime.FrameChannelMessageUpdated,
+		ChannelID: channelID,
+		ClassID:   m.ClassID,
+		Message:   *dto,
+	})
+	return dto, nil
+}
+
 // ============ 附件 ============
 
 func (s *Service) UploadAttachments(ctx context.Context, channelID, userID string, files []*multipart.FileHeader) ([]AttachmentDTO, error) {
@@ -501,6 +568,10 @@ func (s *Service) hydrateMessageDTO(ctx context.Context, m *Message) (*MessageDT
 	if err != nil {
 		return nil, err
 	}
+	reactions, err := s.repo.FindReactionsByMessageIDs(ctx, []string{m.ID})
+	if err != nil {
+		return nil, err
+	}
 	u, err := s.userRepo.FindByID(ctx, m.AuthorUserID)
 	if err != nil {
 		return nil, err
@@ -513,11 +584,11 @@ func (s *Service) hydrateMessageDTO(ctx context.Context, m *Message) (*MessageDT
 		AuthorAvatarKey: u.AvatarKey,
 		AuthorCreatedAt: u.CreatedAt,
 	}
-	dto := s.toMessageDTOWithAuthor(&row, atts)
+	dto := s.toMessageDTOWithAuthor(&row, atts, reactions)
 	return &dto, nil
 }
 
-func (s *Service) toMessageDTOWithAuthor(row *MessageWithAuthor, atts []Attachment) MessageDTO {
+func (s *Service) toMessageDTOWithAuthor(row *MessageWithAuthor, atts []Attachment, reactions []MessageReaction) MessageDTO {
 	d := MessageDTO{
 		ID:        row.ID,
 		ChannelID: row.ChannelID,
@@ -536,10 +607,38 @@ func (s *Service) toMessageDTOWithAuthor(row *MessageWithAuthor, atts []Attachme
 		ts := row.EditedAt.Format(time.RFC3339)
 		d.EditedAt = &ts
 	}
+	if row.Reference != nil && *row.Reference != "" {
+		var ref MessageReference
+		if err := json.Unmarshal([]byte(*row.Reference), &ref); err == nil {
+			d.Reference = &ref
+		}
+	}
 	for i := range atts {
 		d.Attachments = append(d.Attachments, s.toAttachmentDTO(&atts[i]))
 	}
+	d.Reactions = aggregateReactions(reactions)
 	return d
+}
+
+// aggregateReactions 把扁平反应行按 emoji 分组,每组收集 user_ids。
+// 入参按 created_at 升序,故分组顺序 = emoji 首次被反应的时间序。
+func aggregateReactions(reactions []MessageReaction) []ReactionDTO {
+	if len(reactions) == 0 {
+		return nil
+	}
+	idx := make(map[string]int, len(reactions))
+	out := make([]ReactionDTO, 0)
+	for i := range reactions {
+		e := reactions[i].Emoji
+		j, ok := idx[e]
+		if !ok {
+			idx[e] = len(out)
+			out = append(out, ReactionDTO{Emoji: e, UserIDs: []string{reactions[i].UserID}})
+			continue
+		}
+		out[j].UserIDs = append(out[j].UserIDs, reactions[i].UserID)
+	}
+	return out
 }
 
 func (s *Service) toAttachmentDTO(a *Attachment) AttachmentDTO {

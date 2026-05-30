@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	ErrFileTooLarge      = errors.New("solochat: file too large")
+	ErrFileTooLarge       = errors.New("solochat: file too large")
 	ErrFileTypeNotAllowed = errors.New("solochat: file type not allowed")
 	ErrTooManyAttachments = errors.New("solochat: too many attachments")
 )
@@ -239,6 +239,12 @@ func (s *Service) UpdateConversation(ctx context.Context, id, userID, title stri
 
 func (s *Service) DeleteConversation(ctx context.Context, id, userID string) error {
 	return s.repo.DeleteConversation(ctx, id, userID)
+}
+
+// FindFiles 按 id 拉本人拥有的上传文件元数据(含 OSSKey)。供 channel 模块分享
+// 时把 solochat 附件复制成频道附件用;ownerID 约束保证只能复制自己的文件。
+func (s *Service) FindFiles(ctx context.Context, ids []string, ownerID string) ([]UploadedFile, error) {
+	return s.repo.FindFilesByIDs(ctx, ids, ownerID)
 }
 
 // ListMessages 查 ADK session 的 events,翻译成 MessageDTO,再用 Mongo /

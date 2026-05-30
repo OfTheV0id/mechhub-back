@@ -50,7 +50,7 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	hub := realtime.NewHub()
 
 	channelRepo := channel.NewRepo(db)
-	channelSvc := channel.NewService(channelRepo, classRepo, userRepo, oss, hub, cfg)
+	channelSvc := channel.NewService(channelRepo, classRepo, userRepo, solochatSvc, oss, hub, cfg)
 	channelHandler := channel.NewHandler(channelSvc)
 	channel.Mount(api, channelHandler, auth)
 

@@ -1,6 +1,11 @@
 package channel
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"mechhub-back/internal/llm/schemas"
+)
 
 // ============ 表 ============
 
@@ -20,16 +25,77 @@ type Channel struct {
 func (Channel) TableName() string { return "channels" }
 
 type Message struct {
-	ID           string     `gorm:"primaryKey;type:char(36)"`
-	ChannelID    string     `gorm:"type:char(36);not null;index:idx_channel_created,priority:1"`
-	ClassID      string     `gorm:"type:char(36);not null"`
-	AuthorUserID string     `gorm:"type:char(36);not null;index"`
-	Content      string     `gorm:"type:text;not null"`
-	EditedAt     *time.Time `gorm:""`
-	CreatedAt    time.Time  `gorm:"not null;index:idx_channel_created,priority:2,sort:desc"`
+	ID           string `gorm:"primaryKey;type:char(36)"`
+	ChannelID    string `gorm:"type:char(36);not null;index:idx_channel_created,priority:1"`
+	ClassID      string `gorm:"type:char(36);not null"`
+	AuthorUserID string `gorm:"type:char(36);not null;index"`
+	Content      string `gorm:"type:text;not null"`
+	// Reference 富引用快照 JSON(序列化 MessageReference)。nil = 普通消息。
+	// 从 solochat 分享批改 / 对话片段时写入,内容已自包含(图片 URL 指向频道附件)。
+	Reference *string    `gorm:"type:json"`
+	EditedAt  *time.Time `gorm:""`
+	CreatedAt time.Time  `gorm:"not null;index:idx_channel_created,priority:2,sort:desc"`
 }
 
 func (Message) TableName() string { return "channel_messages" }
+
+// MessageReaction 一行 = 某用户对某消息的一个 emoji 反应。
+// (message_id, user_id, emoji) 唯一,防同人同 emoji 重复反应。
+type MessageReaction struct {
+	ID        string    `gorm:"primaryKey;type:char(36)"`
+	MessageID string    `gorm:"type:char(36);not null;index;uniqueIndex:idx_msg_user_emoji,priority:1"`
+	ChannelID string    `gorm:"type:char(36);not null"`
+	ClassID   string    `gorm:"type:char(36);not null"`
+	UserID    string    `gorm:"type:char(36);not null;uniqueIndex:idx_msg_user_emoji,priority:2"`
+	Emoji     string    `gorm:"type:varchar(32);not null;uniqueIndex:idx_msg_user_emoji,priority:3"`
+	CreatedAt time.Time `gorm:"not null"`
+}
+
+func (MessageReaction) TableName() string { return "channel_message_reactions" }
+
+// ============ 富引用快照 ============
+
+const (
+	ReferenceTypeGrading = "grading" // 批改结果快照
+	ReferenceTypeThread  = "thread"  // 对话片段快照
+)
+
+// MessageReference 是 Message.Reference 列里存的结构,同时容纳两种 referenceType。
+// 由后端从 solochat 反查生成,图片附件已复制进频道、URL 重写为频道附件地址。
+type MessageReference struct {
+	Type         string                 `json:"type"`           // grading | thread
+	SourceChatID string                 `json:"source_chat_id"` // 来源 solochat 对话 id(仅溯源展示)
+	SourceTitle  string                 `json:"source_title,omitempty"`
+	Grading      *schemas.GradingOutput `json:"grading,omitempty"`  // type=grading
+	Segments     []ThreadSegment        `json:"segments,omitempty"` // type=thread
+}
+
+type ThreadSegment struct {
+	Role string `json:"role"` // user | assistant
+	// Text 保留:纯文本兼容 + 浓缩卡片预览。完整渲染走 Parts。
+	Text string `json:"text"`
+	// Parts 忠实保留消息的内容块(text / tool_use / tool_result),使分享的
+	// 对话片段也能展示批改可视化、fork 时重建工具链。老数据无此字段时回落到 Text。
+	Parts       []SegmentPart     `json:"parts,omitempty"`
+	Attachments []ReferenceAttach `json:"attachments,omitempty"`
+}
+
+// SegmentPart 是 ThreadSegment 里的一个内容块,字段与 solochat MessagePart 对齐。
+// tool_result(grade_with_ocr)的 Output 里 imageRefs 已重写为频道附件 URL。
+type SegmentPart struct {
+	Type   string          `json:"type"` // text | tool_use | tool_result
+	Text   string          `json:"text,omitempty"`
+	Name   string          `json:"name,omitempty"`
+	Input  json.RawMessage `json:"input,omitempty"`
+	Output json.RawMessage `json:"output,omitempty"`
+}
+
+type ReferenceAttach struct {
+	AttachmentID string `json:"attachment_id"` // 复制后的频道附件 id
+	OriginalName string `json:"original_name"`
+	MimeType     string `json:"mime_type"`
+	URL          string `json:"url"`
+}
 
 type Attachment struct {
 	ID           string    `gorm:"primaryKey;type:char(36)"`
@@ -53,12 +119,13 @@ const (
 
 // 消息编辑/删除最大长度
 const (
-	MaxContentLen     = 4000
-	MaxNameLen        = 64
-	MaxDescriptionLen = 500
-	MaxTopicLen       = 120
+	MaxContentLen            = 4000
+	MaxNameLen               = 64
+	MaxDescriptionLen        = 500
+	MaxTopicLen              = 120
 	MaxAttachmentsPerMessage = 5
 	MaxAttachmentBytes       = 20 * 1024 * 1024 // 20 MiB
+	MaxReactionLen           = 32
 )
 
 // ============ Repo join 行 ============
@@ -91,10 +158,25 @@ type UpdateChannelReq struct {
 type SendMessageReq struct {
 	Content       string   `json:"content"                  binding:"required,min=1,max=4000"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty" binding:"max=5,dive,len=36"`
+	// Share 非 nil 时本条是"分享自 solochat"的富引用消息,后端反查生成快照。
+	Share *ShareRefInput `json:"share,omitempty"`
+}
+
+// ShareRefInput 前端只传"分享什么"的定位信息,绝不传快照内容本身 —— 快照由
+// 后端按 source_chat_id + source_message_id(s) 反查 ADK session 生成,防伪造。
+type ShareRefInput struct {
+	Type             string   `json:"type"           binding:"required,oneof=grading thread"`
+	SourceChatID     string   `json:"source_chat_id" binding:"required,len=36"`
+	SourceMessageID  string   `json:"source_message_id,omitempty"`  // grading:含 grade part 的消息
+	SourceMessageIDs []string `json:"source_message_ids,omitempty"` // thread:勾选的多条消息
 }
 
 type EditMessageReq struct {
 	Content string `json:"content" binding:"required,min=1,max=4000"`
+}
+
+type ToggleReactionReq struct {
+	Emoji string `json:"emoji" binding:"required,min=1,max=32"`
 }
 
 // ============ Response DTOs ============
@@ -113,14 +195,23 @@ type ChannelDTO struct {
 }
 
 type MessageDTO struct {
-	ID          string          `json:"id"`
-	ChannelID   string          `json:"channel_id"`
-	ClassID     string          `json:"class_id"`
-	Content     string          `json:"content"`
-	Author      MessageAuthor   `json:"author"`
-	Attachments []AttachmentDTO `json:"attachments,omitempty"`
-	EditedAt    *string         `json:"edited_at,omitempty"`
-	CreatedAt   string          `json:"created_at"`
+	ID          string            `json:"id"`
+	ChannelID   string            `json:"channel_id"`
+	ClassID     string            `json:"class_id"`
+	Content     string            `json:"content"`
+	Author      MessageAuthor     `json:"author"`
+	Attachments []AttachmentDTO   `json:"attachments,omitempty"`
+	Reference   *MessageReference `json:"reference,omitempty"`
+	Reactions   []ReactionDTO     `json:"reactions,omitempty"`
+	EditedAt    *string           `json:"edited_at,omitempty"`
+	CreatedAt   string            `json:"created_at"`
+}
+
+// ReactionDTO 一个 emoji 的反应聚合。UserIDs 给前端自行派生 count / "是不是我反应过"——
+// 这样一份广播 DTO 对所有接收者都正确,避免服务端按观察者算 me 的错位。
+type ReactionDTO struct {
+	Emoji   string   `json:"emoji"`
+	UserIDs []string `json:"user_ids"`
 }
 
 type MessageAuthor struct {

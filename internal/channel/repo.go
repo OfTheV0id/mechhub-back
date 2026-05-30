@@ -64,6 +64,9 @@ func (r *Repo) DeleteChannel(ctx context.Context, channelID string) ([]string, e
 		if err := tx.Where("channel_id = ?", channelID).Delete(&Attachment{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("channel_id = ?", channelID).Delete(&MessageReaction{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("channel_id = ?", channelID).Delete(&Message{}).Error; err != nil {
 			return err
 		}
@@ -84,6 +87,9 @@ func (r *Repo) DeleteByClass(ctx context.Context, classID string) ([]string, err
 		}
 		// 直接 raw 删,避免 join delete 的 GORM 兼容问题
 		if err := tx.Exec(`DELETE FROM channel_attachments WHERE channel_id IN (SELECT id FROM channels WHERE class_id = ?)`, classID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`DELETE FROM channel_message_reactions WHERE class_id = ?`, classID).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`DELETE FROM channel_messages WHERE class_id = ?`, classID).Error; err != nil {
@@ -119,7 +125,7 @@ func (r *Repo) UpdateMessageContent(ctx context.Context, messageID, content stri
 		Updates(map[string]any{"content": content, "edited_at": gorm.Expr("NOW()")}).Error
 }
 
-// DeleteMessage 联带删该消息的 attachments(DB)。返回被删 OSS keys。
+// DeleteMessage 联带删该消息的 attachments + reactions(DB)。返回被删 OSS keys。
 func (r *Repo) DeleteMessage(ctx context.Context, messageID string) ([]string, error) {
 	var keys []string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -129,9 +135,52 @@ func (r *Repo) DeleteMessage(ctx context.Context, messageID string) ([]string, e
 		if err := tx.Where("message_id = ?", messageID).Delete(&Attachment{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("message_id = ?", messageID).Delete(&MessageReaction{}).Error; err != nil {
+			return err
+		}
 		return tx.Where("id = ?", messageID).Delete(&Message{}).Error
 	})
 	return keys, err
+}
+
+// ============ 反应 ============
+
+// AddReaction 幂等加一条反应:命中唯一索引(同人同 emoji 已存在)时静默成功。
+func (r *Repo) AddReaction(ctx context.Context, reaction *MessageReaction) error {
+	err := r.db.WithContext(ctx).Create(reaction).Error
+	if err != nil && r.IsDuplicateKey(err) {
+		return nil
+	}
+	return err
+}
+
+// RemoveReaction 删一条反应,返回是否真的删到行。
+func (r *Repo) RemoveReaction(ctx context.Context, messageID, userID, emoji string) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Where("message_id = ? AND user_id = ? AND emoji = ?", messageID, userID, emoji).
+		Delete(&MessageReaction{})
+	return res.RowsAffected > 0, res.Error
+}
+
+func (r *Repo) HasReaction(ctx context.Context, messageID, userID, emoji string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&MessageReaction{}).
+		Where("message_id = ? AND user_id = ? AND emoji = ?", messageID, userID, emoji).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// FindReactionsByMessageIDs 批量拉一组消息的全部反应,按 created_at 升序(用于稳定聚合顺序)。
+func (r *Repo) FindReactionsByMessageIDs(ctx context.Context, messageIDs []string) ([]MessageReaction, error) {
+	if len(messageIDs) == 0 {
+		return nil, nil
+	}
+	var rows []MessageReaction
+	err := r.db.WithContext(ctx).
+		Where("message_id IN ?", messageIDs).
+		Order("created_at ASC").
+		Find(&rows).Error
+	return rows, err
 }
 
 // ListMessagesPage 倒序拉一页消息(最新的先来)。before 是 cursor 消息 ID,
@@ -188,6 +237,14 @@ func (r *Repo) FindAttachmentsByIDs(ctx context.Context, ids []string) ([]Attach
 	var rows []Attachment
 	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error
 	return rows, err
+}
+
+// DeleteAttachmentsByIDs 按 id 直接删附件行。供分享流程中途失败时回滚已复制的附件。
+func (r *Repo) DeleteAttachmentsByIDs(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("id IN ?", ids).Delete(&Attachment{}).Error
 }
 
 func (r *Repo) FindAttachmentsByMessageIDs(ctx context.Context, messageIDs []string) ([]Attachment, error) {

@@ -36,6 +36,7 @@ func main() {
 		&channel.Channel{},
 		&channel.Message{},
 		&channel.Attachment{},
+		&channel.MessageReaction{},
 	); err != nil {
 		log.Fatalf("auto migrate: %v", err)
 	}

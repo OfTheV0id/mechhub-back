@@ -18,8 +18,10 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 	// 消息与附件直接在频道下:更简洁,不依赖 classId 二次定位
 	authed.GET("/channels/:channelId/messages", h.ListMessages)
 	authed.POST("/channels/:channelId/messages", h.SendMessage)
+	authed.POST("/channels/:channelId/messages/:messageId/fork", h.ForkMessage)
 	authed.PATCH("/channels/:channelId/messages/:messageId", h.EditMessage)
 	authed.DELETE("/channels/:channelId/messages/:messageId", h.DeleteMessage)
+	authed.POST("/channels/:channelId/messages/:messageId/reactions", h.ToggleReaction)
 
 	authed.POST("/channels/:channelId/attachments", h.UploadAttachments)
 	authed.GET("/channels/:channelId/attachments/:fileId", h.GetAttachment)

@@ -106,7 +106,25 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	dto, err := h.svc.SendMessage(c.Request.Context(), c.Param("channelId"), uid, req)
+	var (
+		dto *MessageDTO
+		err error
+	)
+	if req.Share != nil {
+		dto, err = h.svc.SendShareMessage(c.Request.Context(), c.Param("channelId"), uid, req)
+	} else {
+		dto, err = h.svc.SendMessage(c.Request.Context(), c.Param("channelId"), uid, req)
+	}
+	if err != nil {
+		h.failErr(c, err)
+		return
+	}
+	response.OK(c, dto)
+}
+
+func (h *Handler) ForkMessage(c *gin.Context) {
+	uid := c.MustGet(middleware.CtxUserID).(string)
+	dto, err := h.svc.ForkMessageToSolochat(c.Request.Context(), c.Param("channelId"), c.Param("messageId"), uid)
 	if err != nil {
 		h.failErr(c, err)
 		return
@@ -136,6 +154,21 @@ func (h *Handler) DeleteMessage(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"message": "已删除"})
+}
+
+func (h *Handler) ToggleReaction(c *gin.Context) {
+	var req ToggleReactionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, 400, response.CodeBadRequest, err.Error())
+		return
+	}
+	uid := c.MustGet(middleware.CtxUserID).(string)
+	dto, err := h.svc.ToggleReaction(c.Request.Context(), c.Param("channelId"), c.Param("messageId"), uid, req.Emoji)
+	if err != nil {
+		h.failErr(c, err)
+		return
+	}
+	response.OK(c, dto)
 }
 
 // ============ 附件 ============
@@ -190,6 +223,10 @@ func (h *Handler) failErr(c *gin.Context, err error) {
 		response.Fail(c, 413, response.CodeBadRequest, "附件文件过大")
 	case errors.Is(err, ErrAttachmentInvalid):
 		response.Fail(c, 400, response.CodeBadRequest, "附件无效或权限不符")
+	case errors.Is(err, ErrReactionInvalid):
+		response.Fail(c, 400, response.CodeBadRequest, "表情无效")
+	case errors.Is(err, ErrShareSourceInvalid):
+		response.Fail(c, 400, response.CodeBadRequest, "分享来源无效或图片已不存在")
 	default:
 		response.Fail(c, 500, response.CodeInternal, err.Error())
 	}
