@@ -100,7 +100,7 @@ func (h *Handler) SendMessageStream(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments, req.Grading)
+	h.svc.SendMessageStream(c, id, uid, req.Content, req.Attachments, req.Grading, req.WebSearch)
 }
 
 // StopMessage 取消当前用户在该对话内正在跑的 stream(如果有)。

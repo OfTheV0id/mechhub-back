@@ -79,13 +79,17 @@ func Bootstrap(ctx context.Context, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("grader tool: %w", err)
 	}
+	searchTool, err := tools.NewSearchTool()
+	if err != nil {
+		return nil, fmt.Errorf("search tool: %w", err)
+	}
 
 	agent, err := llmagent.New(llmagent.Config{
 		Name:        AppName,
 		Model:       rootModel,
 		Description: "MechHub 学习助手 —— 讲解概念 / 批改作业 / 答疑",
 		Instruction: prompts.RootSystemPrompt,
-		Tools:       []adktool.Tool{ocrTool, graderTool},
+		Tools:       []adktool.Tool{ocrTool, graderTool, searchTool},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("llmagent.New: %w", err)

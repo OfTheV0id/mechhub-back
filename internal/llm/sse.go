@@ -232,6 +232,10 @@ func isErrorResponse(resp map[string]any) bool {
 	if resp == nil {
 		return false
 	}
+	// 框架级工具错误统一是 {"error": "..."}(base_flow.go callTool)。
+	if _, hasErr := resp["error"]; hasErr {
+		return true
+	}
 	ok, exists := resp["ok"]
 	if !exists {
 		return false

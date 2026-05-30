@@ -313,7 +313,7 @@ func (s *Service) ListMessages(ctx context.Context, conversationID, userID strin
 //     供 OCR/grading 工具复用(文件名前缀 = file_id,与 cache key 对齐)
 //  4. 调 llm.StreamChat 把 ADK 流式事件翻译成 SSE 帧
 //  5. 首条消息后自动命名 + 触发 TouchConversation
-func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string, grading bool) {
+func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, content string, attachmentIDs []string, grading, webSearch bool) {
 	// 派生一个本 stream 专属的 cancel ctx,挂到 activeStreams。同 conversation
 	// 有未完的 stream(用户没等回就再发,或两个标签同时发)时,先把旧 stream
 	// cancel 掉,新 stream 替换 entry,UX 跟 ChatGPT 一致。
@@ -367,7 +367,7 @@ func (s *Service) SendMessageStream(c *gin.Context, conversationID, userID, cont
 	w.Write(StreamEvent{Type: StreamUserInput, Message: &userPending})
 
 	// 组装 user content,图片数据存入内存缓存供 OCR / grading 工具用
-	userContent, err := s.buildUserContent(ctx, conversationID, content, files, grading)
+	userContent, err := s.buildUserContent(ctx, conversationID, content, files, grading, webSearch)
 	if err != nil {
 		w.Write(StreamEvent{Type: StreamError, ErrorMsg: err.Error()})
 		return
@@ -546,7 +546,7 @@ func (s *Service) writeFrame(w *sseutil.Writer, f llm.StreamFrame) {
 //   - 图片 → Part.InlineData + 存内存缓存供 OCR/grading 工具用
 //   - PDF → 直接 Part.InlineData
 //   - text/markdown → 读内容 inline 拼到 prompt 文本
-func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile, grading bool) (*genai.Content, error) {
+func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, files []UploadedFile, grading, webSearch bool) (*genai.Content, error) {
 	parts := make([]*genai.Part, 0, len(files)+1)
 	var inlineBlocks []string
 	var cachedImages []tools.CachedImage
@@ -593,6 +593,9 @@ func (s *Service) buildUserContent(ctx context.Context, sessionID, text string, 
 	composed := strings.TrimSpace(text)
 	if grading {
 		composed += "\n\n[本轮用户开启了\"批改作业\"模式,请以批改老师视角分析作业内容、指出错误并给出评分建议;若包含图片,优先调用 grade_with_ocr 工具。]"
+	}
+	if webSearch {
+		composed += "\n\n[本轮用户开启了\"网页搜索\"模式,如需最新或站外信息请优先调用 web_search 工具检索。引用了检索内容的句子,请在该句末尾用 Markdown 链接内联标注来源(如 [Reuters](https://...)),来源紧贴对应内容;不要在文末单独堆一个链接清单。]"
 	}
 	if len(imageIndices) > 0 {
 		composed += "\n\n[本轮上传图片,供 grade_with_ocr / ocr_images_cached 工具使用]\n"

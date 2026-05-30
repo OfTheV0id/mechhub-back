@@ -94,6 +94,7 @@ type SendMessageReq struct {
 	Content     string   `json:"content" binding:"max=8000"`
 	Attachments []string `json:"attachments"`
 	Grading     bool     `json:"grading,omitempty"`
+	WebSearch   bool     `json:"web_search,omitempty"`
 }
 
 const (
