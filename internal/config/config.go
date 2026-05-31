@@ -23,6 +23,7 @@ type Config struct {
 	Avatar   AvatarConfig
 	Google   GoogleConfig
 	Solochat SolochatConfig
+	Course   CourseConfig
 	LLM      LLMConfig
 }
 
@@ -56,9 +57,9 @@ type AppConfig struct {
 }
 
 type TokenConfig struct {
-	VerifyTTL           time.Duration
-	ResetTTL            time.Duration
-	TeacherApprovalTTL  time.Duration
+	VerifyTTL          time.Duration
+	ResetTTL           time.Duration
+	TeacherApprovalTTL time.Duration
 }
 
 type OSSConfig struct {
@@ -81,6 +82,10 @@ type GoogleConfig struct {
 type SolochatConfig struct {
 	MaxAttachmentsPerMessage int
 	MaxFileSize              int64
+}
+
+type CourseConfig struct {
+	MaxFileSize int64
 }
 
 type LLMConfig struct {
@@ -163,6 +168,9 @@ func Load() *Config {
 		Solochat: SolochatConfig{
 			MaxAttachmentsPerMessage: getInt("SOLOCHAT_MAX_ATTACHMENTS_PER_MESSAGE", 4),
 			MaxFileSize:              int64(getInt("SOLOCHAT_MAX_FILE_SIZE_BYTES", 20*1024*1024)),
+		},
+		Course: CourseConfig{
+			MaxFileSize: int64(getInt("COURSE_MAX_FILE_SIZE_BYTES", 50*1024*1024)),
 		},
 		LLM: LLMConfig{
 			Provider:            getEnv("LLM_PROVIDER", "gemini"),

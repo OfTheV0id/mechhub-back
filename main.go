@@ -7,6 +7,7 @@ import (
 	"mechhub-back/internal/channel"
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
+	"mechhub-back/internal/course"
 	"mechhub-back/internal/db"
 	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
@@ -37,6 +38,11 @@ func main() {
 		&channel.Message{},
 		&channel.Attachment{},
 		&channel.MessageReaction{},
+		&course.Course{},
+		&course.CourseNode{},
+		&course.CourseFile{},
+		&course.NodeProgress{},
+		&course.Annotation{},
 	); err != nil {
 		log.Fatalf("auto migrate: %v", err)
 	}

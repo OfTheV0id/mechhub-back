@@ -7,6 +7,7 @@ import (
 	"mechhub-back/internal/channel"
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
+	"mechhub-back/internal/course"
 	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/middleware"
@@ -39,6 +40,12 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	solochatSvc := solochat.NewService(solochatRepo, llmSvc, oss, cfg)
 	solochatHandler := solochat.NewHandler(solochatSvc)
 	solochat.Mount(api, solochatHandler, auth)
+
+	// Course(学习板块)
+	courseRepo := course.NewRepo(db)
+	courseSvc := course.NewService(courseRepo, userRepo, oss, cfg)
+	courseHandler := course.NewHandler(courseSvc)
+	course.Mount(api, courseHandler, auth)
 
 	// Realtime + Class + Channel —— 三者环环相扣,装配顺序如下:
 	//   1) classRepo 先 —— realtime / channel 都需要它做成员查询
