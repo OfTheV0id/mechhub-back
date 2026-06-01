@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"mechhub-back/internal/assignment"
 	"mechhub-back/internal/channel"
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
@@ -67,6 +68,12 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 
 	realtimeHandler := realtime.NewHandler(hub, classRepo)
 	realtime.Mount(api, realtimeHandler, auth)
+
+	// Assignment(作业板块)—— 复用 classRepo 做成员/角色校验,userRepo 取角色/学生信息
+	assignmentRepo := assignment.NewRepo(db)
+	assignmentSvc := assignment.NewService(assignmentRepo, classRepo, userRepo, oss, cfg)
+	assignmentHandler := assignment.NewHandler(assignmentSvc)
+	assignment.Mount(api, assignmentHandler, auth)
 
 	return r
 }

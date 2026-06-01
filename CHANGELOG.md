@@ -9,6 +9,38 @@
 
 ---
 
+## Claude 轮 20 — 2026-06-01 — 新增作业(Assignments)模块
+
+新增完整的「作业」板块后端,挂在班级之下,覆盖创建 → 学生作答/提交 → 教师批阅打分全流程。复用 `class` 模块的成员/角色校验(`user.role == "teacher"` 且为班级 owner 才能管理作业/批改),其余成员为学生视角。
+
+### 功能
+
+- **新模块 `internal/assignment/`(五件套)**,5 张新表(均加 `assignment_` 前缀,已进 `main.go` AutoMigrate):
+  - `assignment_assignments`(作业:title/description/status(open/closed)/assigned_at/due_at/created_by)
+  - `assignment_questions`(子题目:type ∈ choice/multi/subjective/image,options/answer/media 存 JSON,points,position)
+  - `assignment_submissions`(一生一作业一份,唯一索引 (assignment_id, student_id);status ∈ todo/doing/submitted/late/graded;source ∈ direct/solochat/upload;solochat 导入存 conv id + 标题快照)
+  - `assignment_answers`(每题作答:choice/text/image_keys + score/comment/annotations)
+  - `assignment_files`(图片作答/媒体,按班级成员关系授权读取,独立于 solochat 附件)
+- **新端点(均需登录)**:
+  - `GET /api/assignments/hub` 总览聚合(师/生按角色)
+  - `GET|POST /api/classes/:classId/assignments` 班级作业列表 / 创建
+  - `GET|PATCH|DELETE /api/assignments/:assignmentId` 详情 / 编辑 / 删除
+  - `GET /api/assignments/:assignmentId/roster` 学生提交总览(看板,教师)
+  - `GET|PUT /api/assignments/:assignmentId/submission` 学生取 / 保存提交
+  - `POST /api/assignments/:assignmentId/files` 图片作答 / 媒体上传(multipart)
+  - `GET /api/assignment/files/:fileId` 读取作答文件(owner 或班级教师)
+  - `GET /api/submissions/:submissionId` 批阅工作台数据(教师)
+  - `PATCH /api/submissions/:submissionId/grade` 逐题打分 + 评语 + 图片批注(教师)
+- 学生提交支持直接作答(选择/文本/图片)与从 SoloChat 导入(引用快照,不深拷对话正文)。
+- Postman 同步:新增 `assignment/` 组及全部请求文件,集合根 + local 环境补 `assignmentId`/`submissionId`/`questionId`/`questionId2`/`fileId` 变量。
+
+### 杂项
+
+- 路由装配在 class 之后(复用 `classRepo` / `userRepo`),`internal/router/router.go` 加一行 mount,无新增配置项。
+- 「AI 批改建议」当前为前端占位,后端未接 LLM。
+
+---
+
 ## Claude 轮 19 — 2026-05-29 — 分享消息 fork 回 solochat + 浓缩卡片
 
 给频道里的分享消息(批改 / 对话片段)加 **fork** 能力:任何班级成员都能把它**忠实复制**成自己的 solochat 新对话,不触发 AI 生成。基于消息里自包含的快照 + 频道附件重建,不读原 solochat 对话(属分享者),因此非原作者也能 fork。前端配套:对话片段卡片改为浓缩态 + 可展开全屏预览(纯前端)。

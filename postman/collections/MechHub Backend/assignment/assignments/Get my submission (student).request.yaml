@@ -1,0 +1,8 @@
+$kind: http-request
+name: Get my submission (student)
+description: 学生取自己在该作业的提交(含每题作答);无则返回空草稿壳。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}/submission"
+method: GET
+headers:
+  Accept: application/json
+order: 1700

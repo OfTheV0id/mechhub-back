@@ -1,0 +1,9 @@
+$kind: http-request
+name: Get assignment detail
+description: |-
+  作业详情 + 子题目。教师视角带统计;学生视角附自己的提交(my:含每题作答)。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 1300

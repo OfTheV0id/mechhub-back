@@ -1,0 +1,18 @@
+$kind: http-request
+name: Update assignment
+description: |-
+  编辑作业(仅班级 owner 教师)。所有字段可选;传 questions 则整组替换子题目。
+  status 可设 open/closed(截止)。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "牛顿第二定律 · 受力分析与平衡(修订)",
+      "status": "open"
+    }
+order: 1400

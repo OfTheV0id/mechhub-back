@@ -1,0 +1,11 @@
+$kind: http-request
+name: Hub overview
+description: |-
+  作业总览聚合。按当前用户角色返回:教师=各班待批/进行中/班级数;
+  学生=跨班待完成/最近截止/本月均分 + 扁平的「我的作业」列表。
+  每个班级附 summary(students/count/open/to_grade/my_todo/next_title)。
+url: "{{baseUrl}}/api/assignments/hub"
+method: GET
+headers:
+  Accept: application/json
+order: 1000

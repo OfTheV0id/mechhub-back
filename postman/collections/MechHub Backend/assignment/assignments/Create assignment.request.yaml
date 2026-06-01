@@ -1,0 +1,38 @@
+$kind: http-request
+name: Create assignment
+description: |-
+  创建作业(仅班级 owner 教师)。questions 为子题目数组,type ∈
+  choice/multi/subjective/image;选择题用 options[{key,text}] + answer 存正确项
+  (如 "ABD")。due_at 为 RFC3339。
+url: "{{baseUrl}}/api/classes/{{classId}}/assignments"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "牛顿第二定律 · 受力分析与平衡",
+      "description": "本周作业",
+      "due_at": "2026-06-03T23:59:00+08:00",
+      "questions": [
+        {
+          "type": "choice",
+          "prompt": "关于物体惯性的下列说法,正确的是:",
+          "points": 10,
+          "options": [
+            { "key": "A", "text": "速度越大的物体惯性越大" },
+            { "key": "B", "text": "惯性只与质量有关" }
+          ],
+          "answer": "B"
+        },
+        {
+          "type": "subjective",
+          "prompt": "对斜面上的物块做受力分析并列平衡方程。",
+          "points": 25,
+          "answer": "重力 / 支持力 / 摩擦力,沿斜面与垂直斜面两方向平衡。"
+        }
+      ]
+    }
+order: 1200

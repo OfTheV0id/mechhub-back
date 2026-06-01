@@ -1,0 +1,23 @@
+$kind: http-request
+name: Save submission (student)
+description: |-
+  学生保存/提交作答。submit=true 正式提交(过 due_at 标记 late),否则存草稿。
+  source ∈ direct/solochat/upload;solochat 导入时带 solochat_conv_id + 标题快照。
+  answers 每项含 choice / text / image_keys(上传文件返回的 file id 列表)。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}/submission"
+method: PUT
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "submit": true,
+      "source": "direct",
+      "answers": [
+        { "question_id": "{{questionId}}", "choice": "B" },
+        { "question_id": "{{questionId2}}", "text": "受力分析:重力、支持力、摩擦力……" }
+      ]
+    }
+order: 1800

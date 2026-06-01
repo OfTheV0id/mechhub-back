@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"mechhub-back/internal/assignment"
 	"mechhub-back/internal/channel"
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
@@ -43,6 +44,11 @@ func main() {
 		&course.CourseFile{},
 		&course.NodeProgress{},
 		&course.Annotation{},
+		&assignment.Assignment{},
+		&assignment.Question{},
+		&assignment.Submission{},
+		&assignment.Answer{},
+		&assignment.AssignmentFile{},
 	); err != nil {
 		log.Fatalf("auto migrate: %v", err)
 	}

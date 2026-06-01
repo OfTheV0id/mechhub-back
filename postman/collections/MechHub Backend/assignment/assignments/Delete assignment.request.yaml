@@ -1,0 +1,8 @@
+$kind: http-request
+name: Delete assignment
+description: 删除作业(仅班级 owner 教师),联带删题目/提交/作答。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 1500
