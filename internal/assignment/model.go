@@ -223,6 +223,7 @@ type AnswerDTO struct {
 	QuestionID  string       `json:"question_id"`
 	Choice      string       `json:"choice"`
 	Text        string       `json:"text"`
+	ImageKeys   []string     `json:"image_keys"` // 文件 id,供学生再编辑时保留
 	ImageURLs   []string     `json:"image_urls"`
 	Score       *float64     `json:"score"`
 	Comment     string       `json:"comment"`
@@ -266,20 +267,27 @@ type StudentLite struct {
 
 // RosterEntryDTO 看板里一名学生 + 其提交状态。
 type RosterEntryDTO struct {
-	Student     StudentLite `json:"student"`
-	State       string      `json:"state"` // graded / submitted / late / missing
-	SubmittedAt string      `json:"submitted_at,omitempty"`
-	Score       *float64    `json:"score,omitempty"`
+	Student      StudentLite `json:"student"`
+	SubmissionID string      `json:"submission_id,omitempty"`
+	State        string      `json:"state"` // graded / submitted / late / missing
+	SubmittedAt  string      `json:"submitted_at,omitempty"`
+	Score        *float64    `json:"score,omitempty"`
+}
+
+// GradeRosterLite 批阅页可翻页的已提交学生(带 submission id)。
+type GradeRosterLite struct {
+	SubmissionID string `json:"submission_id"`
+	Name         string `json:"name"`
+	AvatarURL    string `json:"avatar_url,omitempty"`
 }
 
 // 教师批阅:单份提交 + 题目 + 学生信息
 type GradeViewDTO struct {
-	Assignment AssignmentDTO `json:"assignment"`
-	Questions  []QuestionDTO `json:"questions"`
-	Student    StudentLite   `json:"student"`
-	Submission SubmissionDTO `json:"submission"`
-	// 同一作业里可翻页的已提交学生序列
-	Roster []StudentLite `json:"roster"`
+	Assignment AssignmentDTO     `json:"assignment"`
+	Questions  []QuestionDTO     `json:"questions"`
+	Student    StudentLite       `json:"student"`
+	Submission SubmissionDTO     `json:"submission"`
+	Roster     []GradeRosterLite `json:"roster"`
 }
 
 // ============ Hub 总览 ============

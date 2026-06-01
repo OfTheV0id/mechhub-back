@@ -426,6 +426,7 @@ func (s *Service) Roster(ctx context.Context, assignmentID, userID string) ([]Ro
 			State: "missing",
 		}
 		if sub := subByStudent[m.UserID]; sub != nil {
+			entry.SubmissionID = sub.ID
 			entry.State = rosterState(sub)
 			entry.Score = sub.TotalScore
 			if sub.SubmittedAt != nil {
@@ -555,7 +556,7 @@ func (s *Service) GetGradeView(ctx context.Context, submissionID, userID string)
 	if err != nil {
 		return nil, err
 	}
-	roster := make([]StudentLite, 0, len(allSubs))
+	roster := make([]GradeRosterLite, 0, len(allSubs))
 	for i := range allSubs {
 		st := &allSubs[i]
 		if rosterState(st) == "missing" {
@@ -565,7 +566,11 @@ func (s *Service) GetGradeView(ctx context.Context, submissionID, userID string)
 		if err != nil {
 			continue
 		}
-		roster = append(roster, StudentLite{ID: su.ID, Name: su.Name, AvatarURL: s.userAvatarURL(su.ID, su.AvatarKey)})
+		roster = append(roster, GradeRosterLite{
+			SubmissionID: st.ID,
+			Name:         su.Name,
+			AvatarURL:    s.userAvatarURL(su.ID, su.AvatarKey),
+		})
 	}
 
 	return &GradeViewDTO{
@@ -780,6 +785,7 @@ func (s *Service) toSubmissionDTO(ctx context.Context, sub *Submission) (*Submis
 			QuestionID:  ans.QuestionID,
 			Choice:      ans.Choice,
 			Text:        ans.Text,
+			ImageKeys:   parseStrings(ans.ImageKeys),
 			ImageURLs:   s.imageURLs(ans.ImageKeys),
 			Score:       ans.Score,
 			Comment:     ans.Comment,
