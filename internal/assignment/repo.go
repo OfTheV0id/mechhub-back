@@ -208,3 +208,31 @@ func (r *Repo) FindFile(ctx context.Context, id string) (*AssignmentFile, error)
 	}
 	return &f, nil
 }
+
+func (r *Repo) DeleteFile(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&AssignmentFile{}).Error
+}
+
+// ============ 提交记录(批改 / 聊天)============
+
+func (r *Repo) ListSubmissionRecords(ctx context.Context, submissionID string) ([]SubmissionRecord, error) {
+	var rows []SubmissionRecord
+	err := r.db.WithContext(ctx).
+		Where("submission_id = ?", submissionID).
+		Order("position asc").
+		Find(&rows).Error
+	return rows, err
+}
+
+// ReplaceSubmissionRecords 事务清掉旧记录后整体写入(正式提交时调用)。
+func (r *Repo) ReplaceSubmissionRecords(ctx context.Context, submissionID string, recs []SubmissionRecord) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("submission_id = ?", submissionID).Delete(&SubmissionRecord{}).Error; err != nil {
+			return err
+		}
+		if len(recs) > 0 {
+			return tx.Create(&recs).Error
+		}
+		return nil
+	})
+}

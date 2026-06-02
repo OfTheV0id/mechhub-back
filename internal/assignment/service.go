@@ -16,8 +16,9 @@ import (
 
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
-	"mechhub-back/internal/llm"
 	"mechhub-back/internal/realtime"
+	"mechhub-back/internal/reference"
+	"mechhub-back/internal/solochat"
 	"mechhub-back/internal/storage"
 	"mechhub-back/internal/user"
 )
@@ -38,17 +39,17 @@ var allowedFileMime = map[string]string{
 }
 
 type Service struct {
-	repo      *Repo
-	classRepo *class.Repo
-	userRepo  *user.Repo
-	oss       *storage.OSS
-	hub       *realtime.Hub
-	llmSvc    *llm.Service
-	cfg       *config.Config
+	repo        *Repo
+	classRepo   *class.Repo
+	userRepo    *user.Repo
+	oss         *storage.OSS
+	hub         *realtime.Hub
+	solochatSvc *solochat.Service
+	cfg         *config.Config
 }
 
-func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, oss *storage.OSS, hub *realtime.Hub, llmSvc *llm.Service, cfg *config.Config) *Service {
-	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, oss: oss, hub: hub, llmSvc: llmSvc, cfg: cfg}
+func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, oss *storage.OSS, hub *realtime.Hub, solochatSvc *solochat.Service, cfg *config.Config) *Service {
+	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, oss: oss, hub: hub, solochatSvc: solochatSvc, cfg: cfg}
 }
 
 // emitClass 推送作业失效给全班(创建/编辑/删除作业)。
@@ -72,25 +73,165 @@ func (s *Service) emitUser(userID, classID, reason, assignmentID, submissionID s
 	})
 }
 
-// loadImported 取学生从 SoloChat 导入的会话正文。以 owner=学生 身份读取
-// (调用方已确保请求者有权查看该提交:教师 owner 或学生本人)。
-func (s *Service) loadImported(ctx context.Context, sub *Submission) *ImportedRecord {
-	if sub.Source != SourceSoloChat || sub.SoloChatConvID == "" {
-		return nil
-	}
-	msgs, err := s.llmSvc.ListMessages(ctx, sub.StudentID, sub.SoloChatConvID)
+// recordsForSubmission 取一份提交已物化的批改/聊天记录富引用(供师生同款预览)。
+func (s *Service) recordsForSubmission(ctx context.Context, submissionID string) ([]reference.Reference, error) {
+	rows, err := s.repo.ListSubmissionRecords(ctx, submissionID)
 	if err != nil {
-		return &ImportedRecord{Title: sub.SoloChatTitle, Messages: []ImportedMsg{}}
+		return nil, err
 	}
-	out := make([]ImportedMsg, 0, len(msgs))
-	for i := range msgs {
-		text := flattenParts(msgs[i].Parts)
-		if text == "" {
+	out := make([]reference.Reference, 0, len(rows))
+	for i := range rows {
+		if rows[i].Reference == "" {
 			continue
 		}
-		out = append(out, ImportedMsg{Role: msgs[i].Role, Text: text})
+		var ref reference.Reference
+		if json.Unmarshal([]byte(rows[i].Reference), &ref) != nil {
+			continue
+		}
+		out = append(out, ref)
 	}
-	return &ImportedRecord{Title: sub.SoloChatTitle, Messages: out}
+	return out, nil
+}
+
+// materializeRecords 把学生选的 SoloChat 会话快照成自包含记录:校验归属(以学生身份读会话)→
+// 收集图片 → 复制进 assignment_files(scope=answer)→ reference 包构建快照。返回记录行 +
+// 回滚函数;任一步失败先回滚已复制的文件(OSS 对象 + 行),不留半成品。
+func (s *Service) materializeRecords(ctx context.Context, submissionID, studentID, classID string, inputs []SubmissionRecordInput) ([]SubmissionRecord, func(), error) {
+	var allRowIDs, allKeys []string
+	rollback := func() {
+		for _, id := range allRowIDs {
+			_ = s.repo.DeleteFile(context.Background(), id)
+		}
+		for _, k := range allKeys {
+			_ = s.oss.Delete(context.Background(), k)
+		}
+	}
+
+	now := time.Now()
+	out := make([]SubmissionRecord, 0, len(inputs))
+	for i, in := range inputs {
+		msgs, err := s.solochatSvc.ListMessages(ctx, in.SoloChatConvID, studentID)
+		if err != nil {
+			rollback()
+			return nil, nil, err
+		}
+
+		ref := reference.Reference{Type: in.Kind, SourceChatID: in.SoloChatConvID, SourceTitle: in.Title}
+
+		// grading:抽取该会话的 AI 批改结果(grade_with_ocr)。若学生把一条本无批改结果的
+		// 会话选成了「批改记录」(选择器列全部会话,无法预先区分),退化为对话记录(thread)
+		// 快照 —— 保住选择、不让整单提交失败;会话里若含批改,thread 预览里照样能展开。
+		g, hasGrade := reference.FirstGrading(msgs)
+		if in.Kind == reference.TypeGrading && hasGrade {
+			copied, rowIDs, keys, err := s.copySolochatFiles(ctx, studentID, classID, reference.GradingFileIDs(g))
+			allRowIDs = append(allRowIDs, rowIDs...)
+			allKeys = append(allKeys, keys...)
+			if err != nil {
+				rollback()
+				return nil, nil, err
+			}
+			ref.Type = reference.TypeGrading
+			ref.Grading = reference.BuildGrading(g, copied)
+		} else {
+			var fileIDs []string
+			for _, m := range msgs {
+				fileIDs = append(fileIDs, reference.ThreadFileIDs(m)...)
+			}
+			copied, rowIDs, keys, err := s.copySolochatFiles(ctx, studentID, classID, fileIDs)
+			allRowIDs = append(allRowIDs, rowIDs...)
+			allKeys = append(allKeys, keys...)
+			if err != nil {
+				rollback()
+				return nil, nil, err
+			}
+			ref.Type = reference.TypeThread
+			ref.Segments = reference.BuildThread(msgs, copied)
+		}
+
+		refJSON, err := json.Marshal(&ref)
+		if err != nil {
+			rollback()
+			return nil, nil, err
+		}
+		out = append(out, SubmissionRecord{
+			ID:           uuid.NewString(),
+			SubmissionID: submissionID,
+			Kind:         ref.Type,
+			SourceChatID: in.SoloChatConvID,
+			Title:        in.Title,
+			Reference:    string(refJSON),
+			Position:     i,
+			CreatedAt:    now,
+		})
+	}
+	return out, rollback, nil
+}
+
+// copySolochatFiles 把一组 solochat 文件(本人拥有)复制成作业附件(scope=answer)。
+// 返回 solochat file id → 复制后附件 的映射,以及新建的文件行 id 与 OSS key(失败时供回滚)。
+func (s *Service) copySolochatFiles(ctx context.Context, studentID, classID string, fileIDs []string) (map[string]reference.CopiedFile, []string, []string, error) {
+	seen := make(map[string]struct{}, len(fileIDs))
+	uniq := make([]string, 0, len(fileIDs))
+	for _, id := range fileIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	copied := make(map[string]reference.CopiedFile, len(uniq))
+	var rowIDs, keys []string
+	if len(uniq) == 0 {
+		return copied, rowIDs, keys, nil
+	}
+
+	files, err := s.solochatSvc.FindFiles(ctx, uniq, studentID)
+	if err != nil {
+		return copied, rowIDs, keys, err
+	}
+	if len(files) != len(uniq) {
+		return copied, rowIDs, keys, ErrBadInput
+	}
+
+	now := time.Now()
+	for i := range files {
+		f := files[i]
+		suffix, err := randomHex(8)
+		if err != nil {
+			return copied, rowIDs, keys, err
+		}
+		destKey := "assignment/" + classID + "/" + ScopeAnswer + "/" + studentID + "/" + suffix + filepath.Ext(f.OriginalName)
+		if err := s.oss.Copy(ctx, f.OSSKey, destKey); err != nil {
+			return copied, rowIDs, keys, err
+		}
+		keys = append(keys, destKey)
+		af := &AssignmentFile{
+			ID:           uuid.NewString(),
+			ClassID:      classID,
+			Scope:        ScopeAnswer,
+			OwnerUserID:  studentID,
+			OSSKey:       destKey,
+			OriginalName: f.OriginalName,
+			MimeType:     f.MimeType,
+			Kind:         f.Kind,
+			Size:         f.Size,
+			CreatedAt:    now,
+		}
+		if err := s.repo.InsertFile(ctx, af); err != nil {
+			return copied, rowIDs, keys, err
+		}
+		rowIDs = append(rowIDs, af.ID)
+		copied[f.ID] = reference.CopiedFile{
+			ID:           af.ID,
+			OriginalName: af.OriginalName,
+			MimeType:     af.MimeType,
+			URL:          s.fileURL(af.ID),
+		}
+	}
+	return copied, rowIDs, keys, nil
 }
 
 // ============ 访问控制 ============
@@ -333,7 +474,6 @@ func (s *Service) GetDetail(ctx context.Context, assignmentID, userID string) (*
 				return nil, err
 			}
 			detail.My = sd
-			detail.MyImported = s.loadImported(ctx, sub)
 		}
 	}
 	return detail, nil
@@ -584,10 +724,30 @@ func (s *Service) SaveSubmission(ctx context.Context, assignmentID, userID strin
 			Highlights:   "[]",
 		})
 	}
+	// 正式提交时物化附加记录(快照 + 拷贝图片);草稿不带记录。
+	var records []SubmissionRecord
+	var rollbackRecords func()
+	if req.Submit && len(req.Records) > 0 {
+		recs, rb, err := s.materializeRecords(ctx, sub.ID, userID, a.ClassID, req.Records)
+		if err != nil {
+			return nil, err
+		}
+		records, rollbackRecords = recs, rb
+	}
+
 	if err := s.repo.UpsertSubmission(ctx, sub, answers); err != nil {
+		if rollbackRecords != nil {
+			rollbackRecords()
+		}
 		return nil, err
 	}
 	if req.Submit {
+		if err := s.repo.ReplaceSubmissionRecords(ctx, sub.ID, records); err != nil {
+			if rollbackRecords != nil {
+				rollbackRecords()
+			}
+			return nil, err
+		}
 		s.emitUser(cls.OwnerUserID, a.ClassID, realtime.ReasonSubmissionCreated, assignmentID, sub.ID)
 	}
 	return s.toSubmissionDTO(ctx, sub)
@@ -653,7 +813,6 @@ func (s *Service) GetGradeView(ctx context.Context, submissionID, userID string)
 		Student:    StudentLite{ID: stu.ID, Name: stu.Name, AvatarURL: s.userAvatarURL(stu.ID, stu.AvatarKey)},
 		Submission: *sd,
 		Roster:     roster,
-		Imported:   s.loadImported(ctx, sub),
 	}, nil
 }
 
@@ -870,6 +1029,11 @@ func (s *Service) toSubmissionDTO(ctx context.Context, sub *Submission) (*Submis
 			Highlights:  parseHighlights(ans.Highlights),
 		})
 	}
+	recs, err := s.recordsForSubmission(ctx, sub.ID)
+	if err != nil {
+		return nil, err
+	}
+	dto.Records = recs
 	return dto, nil
 }
 
@@ -926,7 +1090,7 @@ func (s *Service) buildQuestions(assignmentID string, inputs []QuestionInput) []
 			Position:     i,
 			Type:         in.Type,
 			Prompt:       strings.TrimSpace(in.Prompt),
-			Points:       in.Points,
+			Points:       FixedQuestionPoints,
 			Options:      marshalJSON(in.Options),
 			Answer:       in.Answer,
 			Media:        marshalJSON(in.Media),
@@ -1150,26 +1314,6 @@ func parseHighlights(raw string) []HighlightRange {
 		return []HighlightRange{}
 	}
 	return out
-}
-
-// flattenParts 把一条 SoloChat 消息的 parts 压成可读文本:文本直取,
-// 工具调用/结果给一句中文标签(批改记录里多是工具结果)。
-func flattenParts(parts []llm.MessagePart) string {
-	var lines []string
-	for i := range parts {
-		p := &parts[i]
-		switch p.Type {
-		case "text":
-			if t := strings.TrimSpace(p.Text); t != "" {
-				lines = append(lines, t)
-			}
-		case "tool_use":
-			lines = append(lines, "【调用工具:"+p.Name+"】")
-		case "tool_result":
-			lines = append(lines, "【AI 批改 / 工具结果】")
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 // ---- 热力图聚合 ----

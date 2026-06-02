@@ -2,8 +2,10 @@ $kind: http-request
 name: Save submission (student)
 description: |-
   学生保存/提交作答。submit=true 正式提交(过 due_at 标记 late),否则存草稿。
-  source ∈ direct/solochat/upload;solochat 导入时带 solochat_conv_id + 标题快照。
   answers 每项含 choice / text / image_keys(上传文件返回的 file id 列表)。
+  records(可选,仅正式提交时物化)= 随作业附加的批改/聊天记录:每项 kind∈grading|thread +
+  solochat_conv_id + 标题。后端会以学生身份读该 SoloChat 会话、把图片复制进作业存储、
+  快照成自包含富引用(SubmissionDTO.records / 详情·批阅页同款预览,师生皆可见)。
 url: "{{baseUrl}}/api/assignments/{{assignmentId}}/submission"
 method: PUT
 headers:
@@ -18,6 +20,10 @@ body:
       "answers": [
         { "question_id": "{{questionId}}", "choice": "B" },
         { "question_id": "{{questionId2}}", "text": "受力分析:重力、支持力、摩擦力……" }
+      ],
+      "records": [
+        { "kind": "grading", "solochat_conv_id": "{{conversationId}}", "title": "第3题 AI 批改" },
+        { "kind": "thread", "solochat_conv_id": "{{conversationId}}", "title": "受力分析答疑" }
       ]
     }
 order: 1800

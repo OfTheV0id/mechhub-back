@@ -12,6 +12,7 @@ import (
 
 	"mechhub-back/internal/llm/schemas"
 	"mechhub-back/internal/realtime"
+	"mechhub-back/internal/reference"
 	"mechhub-back/internal/solochat"
 )
 
@@ -57,14 +58,12 @@ func (s *Service) SendShareMessage(ctx context.Context, channelID, userID string
 		if !ok {
 			return nil, ErrShareSourceInvalid
 		}
-		g, err := extractGrading(m)
-		if err != nil {
-			return nil, err
+		g, ok := reference.ExtractGrading(m)
+		if !ok {
+			return nil, ErrShareSourceInvalid
 		}
 		grading = g
-		for _, r := range g.ImageRefs {
-			fileIDs = append(fileIDs, r.AttachmentID)
-		}
+		fileIDs = append(fileIDs, reference.GradingFileIDs(g)...)
 	case ReferenceTypeThread:
 		if len(share.SourceMessageIDs) == 0 {
 			return nil, ErrShareSourceInvalid
@@ -75,7 +74,7 @@ func (s *Service) SendShareMessage(ctx context.Context, channelID, userID string
 				return nil, ErrShareSourceInvalid
 			}
 			threadMsgs = append(threadMsgs, m)
-			fileIDs = append(fileIDs, threadFileIDs(m)...)
+			fileIDs = append(fileIDs, reference.ThreadFileIDs(m)...)
 		}
 	default:
 		return nil, ErrShareSourceInvalid
@@ -89,32 +88,13 @@ func (s *Service) SendShareMessage(ctx context.Context, channelID, userID string
 	}
 
 	// 第二遍:用复制后的频道附件重写快照(URL/id 指向频道附件,顺序保持不变)。
+	cf := s.copiedRefMap(copied)
 	ref := &MessageReference{Type: share.Type, SourceChatID: share.SourceChatID}
 	switch share.Type {
 	case ReferenceTypeGrading:
-		for i := range grading.ImageRefs {
-			if a, ok := copied[grading.ImageRefs[i].AttachmentID]; ok {
-				grading.ImageRefs[i].AttachmentID = a.ID
-				grading.ImageRefs[i].URL = s.toAttachmentDTO(a).URL
-			}
-		}
-		ref.Grading = grading
+		ref.Grading = reference.BuildGrading(grading, cf)
 	case ReferenceTypeThread:
-		for _, m := range threadMsgs {
-			seg := ThreadSegment{Role: m.Role, Text: collectText(m.Parts)}
-			for _, att := range m.Attachments {
-				if a, ok := copied[att.ID]; ok {
-					seg.Attachments = append(seg.Attachments, ReferenceAttach{
-						AttachmentID: a.ID,
-						OriginalName: a.OriginalName,
-						MimeType:     a.MimeType,
-						URL:          s.toAttachmentDTO(a).URL,
-					})
-				}
-			}
-			seg.Parts = s.buildSegmentParts(m.Parts, copied)
-			ref.Segments = append(ref.Segments, seg)
-		}
+		ref.Segments = reference.BuildThread(threadMsgs, cf)
 	}
 
 	refJSON, err := json.Marshal(ref)
@@ -239,93 +219,16 @@ func (s *Service) rollbackCopied(copied map[string]*Attachment, keys []string) {
 	}
 }
 
-// threadFileIDs 收集一条 solochat 消息里需要复制进频道的所有图片 file id:
-// 用户上传的附件 + grading tool_result(grade_with_ocr)里 imageRefs 引用的图片。
-func threadFileIDs(m solochat.MessageDTO) []string {
-	var ids []string
-	for _, a := range m.Attachments {
-		ids = append(ids, a.ID)
-	}
-	for _, p := range m.Parts {
-		if p.Type == solochat.PartToolResult && p.Name == gradeToolName && len(p.Output) > 0 {
-			var g schemas.GradingOutput
-			if json.Unmarshal(p.Output, &g) == nil {
-				for _, r := range g.ImageRefs {
-					ids = append(ids, r.AttachmentID)
-				}
-			}
+// copiedRefMap 把「solochat file id → 复制后的频道附件」转成 reference 包要的 CopiedFile 映射。
+func (s *Service) copiedRefMap(copied map[string]*Attachment) map[string]reference.CopiedFile {
+	cf := make(map[string]reference.CopiedFile, len(copied))
+	for srcID, a := range copied {
+		cf[srcID] = reference.CopiedFile{
+			ID:           a.ID,
+			OriginalName: a.OriginalName,
+			MimeType:     a.MimeType,
+			URL:          s.toAttachmentDTO(a).URL,
 		}
 	}
-	return ids
-}
-
-// buildSegmentParts 把 solochat 消息 parts 映射成快照 SegmentPart(保留 text /
-// tool_use / tool_result,丢 thinking)。grading 的 tool_result Output 按 copied
-// 映射回写 imageRefs(指向频道附件),使分享片段也能开 OCR 可视化。
-func (s *Service) buildSegmentParts(parts []solochat.MessagePart, copied map[string]*Attachment) []SegmentPart {
-	out := make([]SegmentPart, 0, len(parts))
-	for _, p := range parts {
-		switch p.Type {
-		case solochat.PartText:
-			if p.Text == "" {
-				continue
-			}
-			out = append(out, SegmentPart{Type: "text", Text: p.Text})
-		case solochat.PartToolUse:
-			out = append(out, SegmentPart{Type: "tool_use", Name: p.Name, Input: p.Input})
-		case solochat.PartToolResult:
-			output := p.Output
-			if p.Name == gradeToolName && len(p.Output) > 0 {
-				output = s.rewriteGradingImageRefs(p.Output, copied)
-			}
-			out = append(out, SegmentPart{Type: "tool_result", Name: p.Name, Output: output})
-		}
-	}
-	return out
-}
-
-// rewriteGradingImageRefs 解析 GradingOutput,把 imageRefs 里命中 copied 的
-// 项改写成频道附件 id/url;失败时原样返回。
-func (s *Service) rewriteGradingImageRefs(raw json.RawMessage, copied map[string]*Attachment) json.RawMessage {
-	var g schemas.GradingOutput
-	if json.Unmarshal(raw, &g) != nil {
-		return raw
-	}
-	for i := range g.ImageRefs {
-		if a, ok := copied[g.ImageRefs[i].AttachmentID]; ok {
-			g.ImageRefs[i].AttachmentID = a.ID
-			g.ImageRefs[i].URL = s.toAttachmentDTO(a).URL
-		}
-	}
-	b, err := json.Marshal(g)
-	if err != nil {
-		return raw
-	}
-	return b
-}
-
-func extractGrading(m solochat.MessageDTO) (*schemas.GradingOutput, error) {
-	for _, p := range m.Parts {
-		if p.Type == solochat.PartToolResult && p.Name == gradeToolName && len(p.Output) > 0 {
-			var g schemas.GradingOutput
-			if err := json.Unmarshal(p.Output, &g); err != nil {
-				return nil, ErrShareSourceInvalid
-			}
-			return &g, nil
-		}
-	}
-	return nil, ErrShareSourceInvalid
-}
-
-func collectText(parts []solochat.MessagePart) string {
-	var b strings.Builder
-	for _, p := range parts {
-		if p.Type == solochat.PartText && p.Text != "" {
-			if b.Len() > 0 {
-				b.WriteString("\n\n")
-			}
-			b.WriteString(p.Text)
-		}
-	}
-	return b.String()
+	return cf
 }
