@@ -15,7 +15,7 @@
 
 ### ⚠️ 破坏性
 
-- **文件上传端点改为班级级**:`POST /api/assignments/:assignmentId/files` → `POST /api/classes/:classId/assignment-files`(创建作业时题目媒体需先于作业上传)。`assignment_files` 表 `assignment_id` 列 → `class_id` + 新增 `scope`(`question`/`answer`)。前端 `uploadFiles` 需改打新路径。AutoMigrate 自动加新列,旧 `assignment_id` 列残留无害(功能新无真数据)。
+- **文件上传端点改为班级级**:`POST /api/assignments/:assignmentId/files` → `POST /api/classes/:classId/assignment-files`(创建作业时题目媒体需先于作业上传)。`assignment_files` 表 `assignment_id` 列 → `class_id` + 新增 `scope`(`question`/`answer`)。前端 `uploadFiles` 需改打新路径。⚠️ **既有库需手动迁移**:AutoMigrate 只新增列、不删旧列,遗留的 `assignment_id`(NOT NULL)会导致插入失败。开发期直接重建即可:`DROP TABLE IF EXISTS assignment_answers, assignment_submissions, assignment_questions, assignment_files, assignment_assignments;`(或只删遗留列 `ALTER TABLE assignment_files DROP COLUMN assignment_id;`),重启后由 AutoMigrate 按新结构建表。
 
 ### 功能
 
