@@ -45,3 +45,8 @@ variables:
   channelId: ""
   messageId: ""
   channelAttachmentId: ""
+  assignmentId: ""
+  submissionId: ""
+  questionId: ""
+  questionId2: ""
+  fileId: ""

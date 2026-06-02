@@ -14,3 +14,13 @@ values:
     value: ''
   - key: channelAttachmentId
     value: ''
+  - key: assignmentId
+    value: ''
+  - key: submissionId
+    value: ''
+  - key: questionId
+    value: ''
+  - key: questionId2
+    value: ''
+  - key: fileId
+    value: ''

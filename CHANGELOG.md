@@ -9,6 +9,64 @@
 
 ---
 
+## Claude 轮 21 — 2026-06-02 — 作业模块第二轮:导入内容/媒体/实时/高亮
+
+把作业模块里几处占位做实。**不接 AI、不自动判分(全人工批改)。**
+
+### ⚠️ 破坏性
+
+- **文件上传端点改为班级级**:`POST /api/assignments/:assignmentId/files` → `POST /api/classes/:classId/assignment-files`(创建作业时题目媒体需先于作业上传)。`assignment_files` 表 `assignment_id` 列 → `class_id` + 新增 `scope`(`question`/`answer`)。前端 `uploadFiles` 需改打新路径。⚠️ **既有库需手动迁移**:AutoMigrate 只新增列、不删旧列,遗留的 `assignment_id`(NOT NULL)会导致插入失败。开发期直接重建即可:`DROP TABLE IF EXISTS assignment_answers, assignment_submissions, assignment_questions, assignment_files, assignment_assignments;`(或只删遗留列 `ALTER TABLE assignment_files DROP COLUMN assignment_id;`),重启后由 AutoMigrate 按新结构建表。
+
+### 功能
+
+- **SoloChat 导入内容内嵌**:`assignment.Service` 注入 `*llm.Service`;`GetGradeView`(教师)与 `GetDetail`(学生本人,source=solochat)经 `llm.ListMessages` 取导入会话正文,压成 `ImportedRecord{ title, messages[] }` 随 DTO 返回(`imported` / `my_imported`)。
+- **题目真实媒体**:`Question.Media` 现为 `[{id,name,kind}]` 指向 `assignment_files`;`QuestionDTO.Media` 带解析好的 `url`。教师在创建/编辑作业时上传图片作为题目媒体。
+- **主观题文本高亮**:`assignment_answers` 增 `highlights`(JSON `[{start,end}]`);批改请求 `GradeAnswerInput.highlights` 写入,`AnswerDTO.highlights` 回带。
+- **总览热力图真数据**:`HubDTO.heat` = 近 18 周每日活跃序列(按作业截止 + 提交时间聚合,`[{date,level}]`)。
+- **实时通知**:`assignment.Service` 注入 `*realtime.Hub`,新增帧 `assignment.invalidate`(reason:`assignment_created/updated/deleted/submission_created/graded`)。建/改/删作业→广播全班;学生提交→推教师;教师批改完成→推学生。前端据此实时刷新看板/侧栏/总览。
+
+### 修复
+
+- **已提交即锁定**:`SaveSubmission` 对已 submitted/late/graded 的提交返回 409「作业已提交,不能再修改」,避免学生重存覆盖掉教师批改痕迹。
+
+### 杂项
+
+- `router.go`:`assignment.NewService(..., hub, llmSvc, cfg)` 注入两个新依赖。Postman 文件上传请求路径同步更新。
+
+---
+
+## Claude 轮 20 — 2026-06-01 — 新增作业(Assignments)模块
+
+新增完整的「作业」板块后端,挂在班级之下,覆盖创建 → 学生作答/提交 → 教师批阅打分全流程。复用 `class` 模块的成员/角色校验(`user.role == "teacher"` 且为班级 owner 才能管理作业/批改),其余成员为学生视角。
+
+### 功能
+
+- **新模块 `internal/assignment/`(五件套)**,5 张新表(均加 `assignment_` 前缀,已进 `main.go` AutoMigrate):
+  - `assignment_assignments`(作业:title/description/status(open/closed)/assigned_at/due_at/created_by)
+  - `assignment_questions`(子题目:type ∈ choice/multi/subjective/image,options/answer/media 存 JSON,points,position)
+  - `assignment_submissions`(一生一作业一份,唯一索引 (assignment_id, student_id);status ∈ todo/doing/submitted/late/graded;source ∈ direct/solochat/upload;solochat 导入存 conv id + 标题快照)
+  - `assignment_answers`(每题作答:choice/text/image_keys + score/comment/annotations)
+  - `assignment_files`(图片作答/媒体,按班级成员关系授权读取,独立于 solochat 附件)
+- **新端点(均需登录)**:
+  - `GET /api/assignments/hub` 总览聚合(师/生按角色)
+  - `GET|POST /api/classes/:classId/assignments` 班级作业列表 / 创建
+  - `GET|PATCH|DELETE /api/assignments/:assignmentId` 详情 / 编辑 / 删除
+  - `GET /api/assignments/:assignmentId/roster` 学生提交总览(看板,教师)
+  - `GET|PUT /api/assignments/:assignmentId/submission` 学生取 / 保存提交
+  - `POST /api/assignments/:assignmentId/files` 图片作答 / 媒体上传(multipart)
+  - `GET /api/assignment/files/:fileId` 读取作答文件(owner 或班级教师)
+  - `GET /api/submissions/:submissionId` 批阅工作台数据(教师)
+  - `PATCH /api/submissions/:submissionId/grade` 逐题打分 + 评语 + 图片批注(教师)
+- 学生提交支持直接作答(选择/文本/图片)与从 SoloChat 导入(引用快照,不深拷对话正文)。
+- Postman 同步:新增 `assignment/` 组及全部请求文件,集合根 + local 环境补 `assignmentId`/`submissionId`/`questionId`/`questionId2`/`fileId` 变量。
+
+### 杂项
+
+- 路由装配在 class 之后(复用 `classRepo` / `userRepo`),`internal/router/router.go` 加一行 mount,无新增配置项。
+- 「AI 批改建议」当前为前端占位,后端未接 LLM。
+
+---
+
 ## Claude 轮 19 — 2026-05-29 — 分享消息 fork 回 solochat + 浓缩卡片
 
 给频道里的分享消息(批改 / 对话片段)加 **fork** 能力:任何班级成员都能把它**忠实复制**成自己的 solochat 新对话,不触发 AI 生成。基于消息里自包含的快照 + 频道附件重建,不读原 solochat 对话(属分享者),因此非原作者也能 fork。前端配套:对话片段卡片改为浓缩态 + 可展开全屏预览(纯前端)。

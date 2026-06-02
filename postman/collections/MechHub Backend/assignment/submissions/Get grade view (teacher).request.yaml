@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get grade view (teacher)
+description: |-
+  批阅工作台数据:作业 + 子题目 + 学生信息 + 该份提交(每题作答/已有分数评语)
+  + 可翻页的已提交学生序列。仅班级 owner 教师可调。
+url: "{{baseUrl}}/api/submissions/{{submissionId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 1000

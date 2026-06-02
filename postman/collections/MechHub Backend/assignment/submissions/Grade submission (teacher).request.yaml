@@ -1,0 +1,21 @@
+$kind: http-request
+name: Grade submission (teacher)
+description: |-
+  批改打分。answers 每项含 question_id + score(可空)+ comment + annotations
+  (图片批注框 [{x,y,w,h,note}])。finalize=true 把提交标记为已批改并写总分。
+url: "{{baseUrl}}/api/submissions/{{submissionId}}/grade"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "finalize": true,
+      "answers": [
+        { "question_id": "{{questionId}}", "score": 10, "comment": "正确" },
+        { "question_id": "{{questionId2}}", "score": 22, "comment": "建议补充坐标系标注" }
+      ]
+    }
+order: 1100

@@ -1,0 +1,18 @@
+$kind: collection
+description: >-
+  作业模块。需要登录(session_id cookie)。挂在班级之下,复用 `class` 的成员/角色
+  校验:`user.role == "teacher"` 且为班级 owner 才能创建/编辑/删除作业、查看看板、
+  批改;其余成员为学生视角,可作答/提交。
+
+
+  数据模型:`assignment_assignments`(作业)+ `assignment_questions`(子题目,
+  type ∈ choice/multi/subjective/image)+ `assignment_submissions`(一生一作业一份,
+  status ∈ todo/doing/submitted/late/graded,source ∈ direct/solochat/upload)+
+  `assignment_answers`(每题作答 + 分数/评语/图片批注)+ `assignment_files`
+  (图片作答/媒体,按班级成员关系授权读取)。
+
+
+  学生提交支持:① 直接作答(选择/文本/图片);② 从 SoloChat 导入(存
+  conv id + 标题快照);③ 文件上传。教师批阅为逐题打分 + 评语 + 图片批注框,
+  「AI 批改建议」当前为前端占位,未接后端。
+order: 4500

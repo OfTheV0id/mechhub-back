@@ -1,0 +1,10 @@
+$kind: http-request
+name: List class assignments
+description: |-
+  列出某班级的全部作业(侧栏用)。教师视角带 submitted/total/graded/avg 统计;
+  学生视角带 my(status/done/total/score)。按 due_at desc 排序。
+url: "{{baseUrl}}/api/classes/{{classId}}/assignments"
+method: GET
+headers:
+  Accept: application/json
+order: 1100

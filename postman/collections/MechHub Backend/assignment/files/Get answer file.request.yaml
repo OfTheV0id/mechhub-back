@@ -1,0 +1,8 @@
+$kind: http-request
+name: Get answer file
+description: stream-through 读取作答文件。学生本人或该班 owner 教师可访问。
+url: "{{baseUrl}}/api/assignment/files/{{fileId}}"
+method: GET
+headers:
+  Accept: application/octet-stream
+order: 2000

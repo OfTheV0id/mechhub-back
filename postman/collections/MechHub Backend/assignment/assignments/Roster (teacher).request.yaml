@@ -1,0 +1,10 @@
+$kind: http-request
+name: Roster (teacher)
+description: |-
+  学生提交总览(看板/网格/列表共用)。返回班级每名学生 + 其提交状态
+  (graded/submitted/late/missing)+ 分数。仅班级 owner 教师可调。
+url: "{{baseUrl}}/api/assignments/{{assignmentId}}/roster"
+method: GET
+headers:
+  Accept: application/json
+order: 1600
