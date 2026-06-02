@@ -26,9 +26,9 @@ type Question struct {
 	Type         string `gorm:"type:varchar(16);not null;default:'choice'"`
 	Prompt       string `gorm:"type:text"`
 	Points       int    `gorm:"not null;default:0"`
-	Options      string `gorm:"type:json"` // [{key,text}]
+	Options      string `gorm:"type:text"` // JSON [{key,text}](手动序列化,用 text 避免空值触发 MySQL json 校验)
 	Answer       string `gorm:"type:text"` // 参考答案 / 正确项("ABD")
-	Media        string `gorm:"type:json"` // [{name,kind}]
+	Media        string `gorm:"type:text"` // JSON [{id,name,kind}]
 }
 
 func (Question) TableName() string { return "assignment_questions" }
@@ -56,11 +56,11 @@ type Answer struct {
 	QuestionID   string   `gorm:"type:char(36);not null;uniqueIndex:idx_submission_question,priority:2"`
 	Choice       string   `gorm:"type:varchar(64)"`
 	Text         string   `gorm:"type:text"`
-	ImageKeys    string   `gorm:"type:json"` // []ossKey
+	ImageKeys    string   `gorm:"type:text"` // JSON []fileID
 	Score        *float64 `gorm:""`
 	Comment      string   `gorm:"type:text"`
-	Annotations  string   `gorm:"type:json"` // [{x,y,w,h,note}] 图片批注框
-	Highlights   string   `gorm:"type:json"` // [{start,end}] 主观题文本高亮
+	Annotations  string   `gorm:"type:text"` // JSON [{x,y,w,h,note}] 图片批注框
+	Highlights   string   `gorm:"type:text"` // JSON [{start,end}] 主观题文本高亮
 }
 
 func (Answer) TableName() string { return "assignment_answers" }
