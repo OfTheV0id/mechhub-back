@@ -9,6 +9,26 @@
 
 ---
 
+## Claude 轮 22 — 2026-06-02 — 作业模块:图片预览 / 固定满分 / 全屏批注 / 提交批改·聊天记录
+
+### ⚠️ 破坏性
+
+- **提交记录改为 `records[]`(废弃 `source=solochat` 导入路径)**:`SaveSubmissionReq` 新增 `records`(每项 `{kind: grading|thread, solochat_conv_id, title}`,仅 `submit=true` 时物化);`SubmissionDTO` 新增 `records`(`[]reference.Reference` 富引用,师生同款预览)。**删除** `AssignmentDetailDTO.my_imported`、`GradeViewDTO.imported` 与 `ImportedRecord` 路径。正常作答与批改/聊天记录现在可**同时**提交;`Submission.source` 新提交恒 `direct`,`solochat_conv_id/title` 列降级为历史遗留。**前端调用方**:学生端用选择器把会话排入 records 后随作答一起提交,师生端用富引用卡片预览(对话片段蒙层 / OCR 可视化);旧 `source=solochat` 历史提交不再显示导入正文。
+- **新表 `assignment_submission_records`**:存提交记录快照(`kind / source_chat_id / title / reference(JSON) / position`)。AutoMigrate 自动建表,无需手动迁移。
+- **每个子题目满分固定 10**:创建/编辑作业时后端强制 `Question.Points = 10`(无视客户端传值),前端移除分值输入框。历史作业旧分值保持不变;但**编辑历史作业会把其各题满分一并归正为 10**。
+- **`assignment.Annotation` 增 `img` 字段**:图片批注框新增所属图片下标 `img`(多图作答时;缺省 0 = 第一张,兼容旧数据)。
+
+### 功能
+
+- **作业图片可点开预览**:题目媒体、学生作答图片、创建页媒体均接入全屏预览蒙层(`zuAttachmentPreview`,与 solochat/班级附件一致)。
+- **教师全屏批注**:批阅图片题点击进入全屏批注器(前端引入 `react-zoom-pan-pinch`:滚轮缩放 / 拖拽平移 / 切「画框」拖拽新增批注框 + 编辑/删除),批注沿用既有 `{x,y,w,h,note}` 数据形状回写。
+- **批改/聊天记录富引用(师生皆可预览)**:提交时以学生身份读 SoloChat 会话、把引用到的图片复制进 `assignment_files`(scope=answer)、快照成自包含富引用;教师对 answer 范围文件可读 → 师生都能完整预览(含图片与 OCR 批改可视化)。
+
+### 杂项
+
+- **抽出 `internal/reference` 共享包**:把「solochat 消息 → 富引用快照」的类型与构建逻辑(原在 `channel/share.go`)抽成存储无关的共享包,`channel`(分享到频道)与 `assignment`(提交记录)共用,单一真相源。`channel` 的 `MessageReference/ThreadSegment/SegmentPart/ReferenceAttach` 改为 `reference.*` 别名,**JSON 形状完全不变** → 前端与库内既有频道快照零影响。
+- `assignment.Service` 依赖从 `*llm.Service` 换成 `*solochat.Service`(读会话消息 + 取文件 OSS key 复制到作业存储)。
+
 ## Claude 轮 21 — 2026-06-02 — 作业模块第二轮:导入内容/媒体/实时/高亮
 
 把作业模块里几处占位做实。**不接 AI、不自动判分(全人工批改)。**

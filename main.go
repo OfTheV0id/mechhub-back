@@ -49,6 +49,7 @@ func main() {
 		&assignment.Submission{},
 		&assignment.Answer{},
 		&assignment.AssignmentFile{},
+		&assignment.SubmissionRecord{},
 	); err != nil {
 		log.Fatalf("auto migrate: %v", err)
 	}

@@ -1,10 +1,9 @@
 package channel
 
 import (
-	"encoding/json"
 	"time"
 
-	"mechhub-back/internal/llm/schemas"
+	"mechhub-back/internal/reference"
 )
 
 // ============ 表 ============
@@ -54,48 +53,21 @@ type MessageReaction struct {
 func (MessageReaction) TableName() string { return "channel_message_reactions" }
 
 // ============ 富引用快照 ============
+//
+// 类型与构建逻辑统一在 internal/reference(channel 与 assignment 共用,单一真相源)。
+// 这里用别名保留 channel 内既有命名,JSON 形状完全一致 —— 前端与库里历史快照零影响。
 
 const (
-	ReferenceTypeGrading = "grading" // 批改结果快照
-	ReferenceTypeThread  = "thread"  // 对话片段快照
+	ReferenceTypeGrading = reference.TypeGrading
+	ReferenceTypeThread  = reference.TypeThread
 )
 
-// MessageReference 是 Message.Reference 列里存的结构,同时容纳两种 referenceType。
-// 由后端从 solochat 反查生成,图片附件已复制进频道、URL 重写为频道附件地址。
-type MessageReference struct {
-	Type         string                 `json:"type"`           // grading | thread
-	SourceChatID string                 `json:"source_chat_id"` // 来源 solochat 对话 id(仅溯源展示)
-	SourceTitle  string                 `json:"source_title,omitempty"`
-	Grading      *schemas.GradingOutput `json:"grading,omitempty"`  // type=grading
-	Segments     []ThreadSegment        `json:"segments,omitempty"` // type=thread
-}
-
-type ThreadSegment struct {
-	Role string `json:"role"` // user | assistant
-	// Text 保留:纯文本兼容 + 浓缩卡片预览。完整渲染走 Parts。
-	Text string `json:"text"`
-	// Parts 忠实保留消息的内容块(text / tool_use / tool_result),使分享的
-	// 对话片段也能展示批改可视化、fork 时重建工具链。老数据无此字段时回落到 Text。
-	Parts       []SegmentPart     `json:"parts,omitempty"`
-	Attachments []ReferenceAttach `json:"attachments,omitempty"`
-}
-
-// SegmentPart 是 ThreadSegment 里的一个内容块,字段与 solochat MessagePart 对齐。
-// tool_result(grade_with_ocr)的 Output 里 imageRefs 已重写为频道附件 URL。
-type SegmentPart struct {
-	Type   string          `json:"type"` // text | tool_use | tool_result
-	Text   string          `json:"text,omitempty"`
-	Name   string          `json:"name,omitempty"`
-	Input  json.RawMessage `json:"input,omitempty"`
-	Output json.RawMessage `json:"output,omitempty"`
-}
-
-type ReferenceAttach struct {
-	AttachmentID string `json:"attachment_id"` // 复制后的频道附件 id
-	OriginalName string `json:"original_name"`
-	MimeType     string `json:"mime_type"`
-	URL          string `json:"url"`
-}
+type (
+	MessageReference = reference.Reference
+	ThreadSegment    = reference.ThreadSegment
+	SegmentPart      = reference.SegmentPart
+	ReferenceAttach  = reference.Attach
+)
 
 type Attachment struct {
 	ID           string    `gorm:"primaryKey;type:char(36)"`

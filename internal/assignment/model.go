@@ -1,6 +1,10 @@
 package assignment
 
-import "time"
+import (
+	"time"
+
+	"mechhub-back/internal/reference"
+)
 
 // ============ 实体 ============
 
@@ -83,6 +87,22 @@ type AssignmentFile struct {
 
 func (AssignmentFile) TableName() string { return "assignment_files" }
 
+// SubmissionRecord 学生随作业一并提交的一条富引用记录(批改记录 / 聊天记录)。提交时从某条
+// SoloChat 会话快照而来,引用里的图片已复制进 assignment_files(scope=answer),自包含 ——
+// 师生都能完整预览(教师对 answer 范围文件可读)。Kind = grading | thread。
+type SubmissionRecord struct {
+	ID           string    `gorm:"primaryKey;type:char(36)"`
+	SubmissionID string    `gorm:"type:char(36);not null;index:idx_record_submission"`
+	Kind         string    `gorm:"type:varchar(16);not null"`
+	SourceChatID string    `gorm:"type:char(36)"`
+	Title        string    `gorm:"type:varchar(200)"`
+	Reference    string    `gorm:"type:text"` // JSON 快照(reference.Reference)
+	Position     int       `gorm:"not null;default:0"`
+	CreatedAt    time.Time `gorm:"not null"`
+}
+
+func (SubmissionRecord) TableName() string { return "assignment_submission_records" }
+
 const (
 	StatusOpen   = "open"
 	StatusClosed = "closed"
@@ -104,6 +124,10 @@ const (
 
 	ScopeQuestion = "question"
 	ScopeAnswer   = "answer"
+
+	// FixedQuestionPoints 每个子题目满分固定 10 分,创建/编辑时强制写入,
+	// 无视客户端传值。历史作业的旧分值保持不变。
+	FixedQuestionPoints = 10
 )
 
 // ============ 嵌套值结构(JSON 解析后的形状)============
@@ -128,6 +152,7 @@ type MediaDTO struct {
 }
 
 type Annotation struct {
+	Img  int     `json:"img,omitempty"` // 批注框所属的作答图片下标(多图时);缺省 0 = 第一张
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
 	W    float64 `json:"w"`
@@ -174,13 +199,23 @@ type AnswerInput struct {
 	ImageKeys  []string `json:"image_keys"`
 }
 
+// SubmissionRecordInput 学生提交时附加的一条记录意图:从哪条 SoloChat 会话快照,作为
+// 批改记录(grading,抽取该会话的批改结果)还是聊天记录(thread,整段对话)。
+type SubmissionRecordInput struct {
+	Kind           string `json:"kind"             binding:"required,oneof=grading thread"`
+	SoloChatConvID string `json:"solochat_conv_id" binding:"required,len=36"`
+	Title          string `json:"title"`
+}
+
 // SaveSubmissionReq 学生保存/提交作答。submit=true 表示正式提交(锁定),否则存草稿。
+// Records 仅在正式提交时物化(快照 + 拷贝图片);草稿不带。
 type SaveSubmissionReq struct {
-	Submit         bool          `json:"submit"`
-	Source         string        `json:"source"` // direct / solochat / upload
-	SoloChatConvID string        `json:"solochat_conv_id"`
-	SoloChatTitle  string        `json:"solochat_title"`
-	Answers        []AnswerInput `json:"answers"`
+	Submit         bool                    `json:"submit"`
+	Source         string                  `json:"source"` // direct / solochat / upload
+	SoloChatConvID string                  `json:"solochat_conv_id"`
+	SoloChatTitle  string                  `json:"solochat_title"`
+	Answers        []AnswerInput           `json:"answers"`
+	Records        []SubmissionRecordInput `json:"records" binding:"omitempty,dive"`
 }
 
 type GradeAnswerInput struct {
@@ -254,36 +289,25 @@ type AnswerDTO struct {
 }
 
 type SubmissionDTO struct {
-	ID             string      `json:"id"`
-	AssignmentID   string      `json:"assignment_id"`
-	StudentID      string      `json:"student_id"`
-	Status         string      `json:"status"`
-	Source         string      `json:"source"`
-	SoloChatConvID string      `json:"solochat_conv_id,omitempty"`
-	SoloChatTitle  string      `json:"solochat_title,omitempty"`
-	TotalScore     *float64    `json:"total_score"`
-	SubmittedAt    string      `json:"submitted_at,omitempty"`
-	GradedAt       string      `json:"graded_at,omitempty"`
-	Answers        []AnswerDTO `json:"answers"`
+	ID             string                `json:"id"`
+	AssignmentID   string                `json:"assignment_id"`
+	StudentID      string                `json:"student_id"`
+	Status         string                `json:"status"`
+	Source         string                `json:"source"`
+	SoloChatConvID string                `json:"solochat_conv_id,omitempty"`
+	SoloChatTitle  string                `json:"solochat_title,omitempty"`
+	TotalScore     *float64              `json:"total_score"`
+	SubmittedAt    string                `json:"submitted_at,omitempty"`
+	GradedAt       string                `json:"graded_at,omitempty"`
+	Answers        []AnswerDTO           `json:"answers"`
+	Records        []reference.Reference `json:"records,omitempty"` // 批改 / 聊天记录富引用,师生同款预览
 }
 
-// AssignmentDetailDTO 作业详情:题目 + (学生)自己的提交。
+// AssignmentDetailDTO 作业详情:题目 + (学生)自己的提交(含 records 富引用)。
 type AssignmentDetailDTO struct {
-	Assignment AssignmentDTO   `json:"assignment"`
-	Questions  []QuestionDTO   `json:"questions"`
-	My         *SubmissionDTO  `json:"my,omitempty"`
-	MyImported *ImportedRecord `json:"my_imported,omitempty"`
-}
-
-// ImportedRecord 学生从 SoloChat 导入的记录正文(供师/生在批阅/查看时阅读)。
-type ImportedRecord struct {
-	Title    string        `json:"title"`
-	Messages []ImportedMsg `json:"messages"`
-}
-
-type ImportedMsg struct {
-	Role string `json:"role"` // user / assistant
-	Text string `json:"text"`
+	Assignment AssignmentDTO  `json:"assignment"`
+	Questions  []QuestionDTO  `json:"questions"`
+	My         *SubmissionDTO `json:"my,omitempty"`
 }
 
 type AssignmentFileDTO struct {
@@ -316,14 +340,13 @@ type GradeRosterLite struct {
 	AvatarURL    string `json:"avatar_url,omitempty"`
 }
 
-// 教师批阅:单份提交 + 题目 + 学生信息
+// 教师批阅:单份提交 + 题目 + 学生信息(submission.records 携带批改/聊天记录富引用)
 type GradeViewDTO struct {
 	Assignment AssignmentDTO     `json:"assignment"`
 	Questions  []QuestionDTO     `json:"questions"`
 	Student    StudentLite       `json:"student"`
 	Submission SubmissionDTO     `json:"submission"`
 	Roster     []GradeRosterLite `json:"roster"`
-	Imported   *ImportedRecord   `json:"imported,omitempty"`
 }
 
 // ============ Hub 总览 ============
