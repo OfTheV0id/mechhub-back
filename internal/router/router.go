@@ -69,9 +69,10 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	realtimeHandler := realtime.NewHandler(hub, classRepo)
 	realtime.Mount(api, realtimeHandler, auth)
 
-	// Assignment(作业板块)—— 复用 classRepo 做成员/角色校验,userRepo 取角色/学生信息
+	// Assignment(作业板块)—— 复用 classRepo 做成员/角色校验,userRepo 取角色/学生信息,
+	// hub 推实时失效,llmSvc 取 SoloChat 导入的会话正文
 	assignmentRepo := assignment.NewRepo(db)
-	assignmentSvc := assignment.NewService(assignmentRepo, classRepo, userRepo, oss, cfg)
+	assignmentSvc := assignment.NewService(assignmentRepo, classRepo, userRepo, oss, hub, llmSvc, cfg)
 	assignmentHandler := assignment.NewHandler(assignmentSvc)
 	assignment.Mount(api, assignmentHandler, auth)
 

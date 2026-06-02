@@ -26,8 +26,8 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 	authed.GET("/assignments/:assignmentId/submission", h.GetMySubmission)
 	authed.PUT("/assignments/:assignmentId/submission", h.SaveSubmission)
 
-	// 图片作答 / 媒体上传
-	authed.POST("/assignments/:assignmentId/files", h.UploadFiles)
+	// 题目媒体(教师)/ 图片作答(学生)上传 —— 班级级,创建作业时也能用
+	authed.POST("/classes/:classId/assignment-files", h.UploadFiles)
 
 	// 教师批阅
 	authed.GET("/submissions/:submissionId", h.GetGradeView)

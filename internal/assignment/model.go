@@ -59,16 +59,19 @@ type Answer struct {
 	ImageKeys    string   `gorm:"type:json"` // []ossKey
 	Score        *float64 `gorm:""`
 	Comment      string   `gorm:"type:text"`
-	Annotations  string   `gorm:"type:json"` // [{x,y,w,h,note}]
+	Annotations  string   `gorm:"type:json"` // [{x,y,w,h,note}] 图片批注框
+	Highlights   string   `gorm:"type:json"` // [{start,end}] 主观题文本高亮
 }
 
 func (Answer) TableName() string { return "assignment_answers" }
 
-// AssignmentFile 图片作答 / 题目媒体。独立于 solochat 附件:教师批阅时需按班级成员
-// 关系授权读取学生上传的图,solochat 附件只允许 owner 自己读。
+// AssignmentFile 题目媒体(教师上传,scope=question)与图片作答(学生上传,scope=answer)。
+// 按班级成员关系授权:question 全班可读,answer 仅 owner 学生或该班教师可读。
+// 班级级而非作业级 —— 创建作业时作业尚不存在,题目媒体需先于作业上传。
 type AssignmentFile struct {
 	ID           string    `gorm:"primaryKey;type:char(36)"`
-	AssignmentID string    `gorm:"type:char(36);not null;index:idx_file_assignment"`
+	ClassID      string    `gorm:"type:char(36);not null;index:idx_file_class"`
+	Scope        string    `gorm:"type:varchar(16);not null;default:'answer'"`
 	OwnerUserID  string    `gorm:"type:char(36);not null;index:idx_file_owner"`
 	OSSKey       string    `gorm:"type:varchar(255)"`
 	OriginalName string    `gorm:"type:varchar(255)"`
@@ -98,6 +101,9 @@ const (
 	QTypeMulti      = "multi"
 	QTypeSubjective = "subjective"
 	QTypeImage      = "image"
+
+	ScopeQuestion = "question"
+	ScopeAnswer   = "answer"
 )
 
 // ============ 嵌套值结构(JSON 解析后的形状)============
@@ -107,9 +113,18 @@ type Option struct {
 	Text string `json:"text"`
 }
 
+// Media 题目媒体引用:id 指向 AssignmentFile,name/kind 为展示用快照。
 type Media struct {
+	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
+}
+
+type MediaDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	URL  string `json:"url"`
 }
 
 type Annotation struct {
@@ -118,6 +133,12 @@ type Annotation struct {
 	W    float64 `json:"w"`
 	H    float64 `json:"h"`
 	Note string  `json:"note"`
+}
+
+// HighlightRange 主观题作答文本里的高亮区间(字符偏移)。
+type HighlightRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 // ============ 请求 DTO ============
@@ -163,10 +184,11 @@ type SaveSubmissionReq struct {
 }
 
 type GradeAnswerInput struct {
-	QuestionID  string       `json:"question_id" binding:"required"`
-	Score       *float64     `json:"score"`
-	Comment     string       `json:"comment"`
-	Annotations []Annotation `json:"annotations"`
+	QuestionID  string           `json:"question_id" binding:"required"`
+	Score       *float64         `json:"score"`
+	Comment     string           `json:"comment"`
+	Annotations []Annotation     `json:"annotations"`
+	Highlights  []HighlightRange `json:"highlights"`
 }
 
 // GradeReq 教师批改。finalize=true 把提交标记为已批改。
@@ -178,14 +200,14 @@ type GradeReq struct {
 // ============ 响应 DTO ============
 
 type QuestionDTO struct {
-	ID       string   `json:"id"`
-	Type     string   `json:"type"`
-	Prompt   string   `json:"prompt"`
-	Points   int      `json:"points"`
-	Options  []Option `json:"options"`
-	Answer   string   `json:"answer"`
-	Media    []Media  `json:"media"`
-	Position int      `json:"position"`
+	ID       string     `json:"id"`
+	Type     string     `json:"type"`
+	Prompt   string     `json:"prompt"`
+	Points   int        `json:"points"`
+	Options  []Option   `json:"options"`
+	Answer   string     `json:"answer"`
+	Media    []MediaDTO `json:"media"`
+	Position int        `json:"position"`
 }
 
 // MySubmissionLite 列表/侧栏里学生自己的提交摘要。
@@ -197,17 +219,17 @@ type MySubmissionLite struct {
 }
 
 type AssignmentDTO struct {
-	ID            string    `json:"id"`
-	ClassID       string    `json:"class_id"`
-	Title         string    `json:"title"`
-	Description   string    `json:"description"`
-	Status        string    `json:"status"`
-	AssignedAt    string    `json:"assigned_at"`
-	DueAt         string    `json:"due_at"`
-	CreatedBy     string    `json:"created_by"`
-	QuestionCount int       `json:"question_count"`
-	Points        int       `json:"points"`
-	CreatedAt     string    `json:"created_at"`
+	ID            string `json:"id"`
+	ClassID       string `json:"class_id"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Status        string `json:"status"`
+	AssignedAt    string `json:"assigned_at"`
+	DueAt         string `json:"due_at"`
+	CreatedBy     string `json:"created_by"`
+	QuestionCount int    `json:"question_count"`
+	Points        int    `json:"points"`
+	CreatedAt     string `json:"created_at"`
 
 	// 教师视角统计
 	Submitted int      `json:"submitted"`
@@ -220,14 +242,15 @@ type AssignmentDTO struct {
 }
 
 type AnswerDTO struct {
-	QuestionID  string       `json:"question_id"`
-	Choice      string       `json:"choice"`
-	Text        string       `json:"text"`
-	ImageKeys   []string     `json:"image_keys"` // 文件 id,供学生再编辑时保留
-	ImageURLs   []string     `json:"image_urls"`
-	Score       *float64     `json:"score"`
-	Comment     string       `json:"comment"`
-	Annotations []Annotation `json:"annotations"`
+	QuestionID  string           `json:"question_id"`
+	Choice      string           `json:"choice"`
+	Text        string           `json:"text"`
+	ImageKeys   []string         `json:"image_keys"` // 文件 id,供学生再编辑时保留
+	ImageURLs   []string         `json:"image_urls"`
+	Score       *float64         `json:"score"`
+	Comment     string           `json:"comment"`
+	Annotations []Annotation     `json:"annotations"`
+	Highlights  []HighlightRange `json:"highlights"`
 }
 
 type SubmissionDTO struct {
@@ -246,9 +269,21 @@ type SubmissionDTO struct {
 
 // AssignmentDetailDTO 作业详情:题目 + (学生)自己的提交。
 type AssignmentDetailDTO struct {
-	Assignment AssignmentDTO  `json:"assignment"`
-	Questions  []QuestionDTO  `json:"questions"`
-	My         *SubmissionDTO `json:"my,omitempty"`
+	Assignment AssignmentDTO   `json:"assignment"`
+	Questions  []QuestionDTO   `json:"questions"`
+	My         *SubmissionDTO  `json:"my,omitempty"`
+	MyImported *ImportedRecord `json:"my_imported,omitempty"`
+}
+
+// ImportedRecord 学生从 SoloChat 导入的记录正文(供师/生在批阅/查看时阅读)。
+type ImportedRecord struct {
+	Title    string        `json:"title"`
+	Messages []ImportedMsg `json:"messages"`
+}
+
+type ImportedMsg struct {
+	Role string `json:"role"` // user / assistant
+	Text string `json:"text"`
 }
 
 type AssignmentFileDTO struct {
@@ -288,6 +323,7 @@ type GradeViewDTO struct {
 	Student    StudentLite       `json:"student"`
 	Submission SubmissionDTO     `json:"submission"`
 	Roster     []GradeRosterLite `json:"roster"`
+	Imported   *ImportedRecord   `json:"imported,omitempty"`
 }
 
 // ============ Hub 总览 ============
@@ -306,16 +342,16 @@ type ClassSummaryDTO struct {
 
 // HubAssignmentDTO 学生总览里跨班的扁平作业项。
 type HubAssignmentDTO struct {
-	ID             string `json:"id"`
-	ClassID        string `json:"class_id"`
-	ClassName      string `json:"class_name"`
-	ClassAvatarURL string `json:"class_avatar_url,omitempty"`
-	Title          string `json:"title"`
-	DueAt          string `json:"due_at"`
-	Status         string `json:"status"`
-	MyStatus       string `json:"my_status"`
-	MyDone         int    `json:"my_done"`
-	MyTotal        int    `json:"my_total"`
+	ID             string   `json:"id"`
+	ClassID        string   `json:"class_id"`
+	ClassName      string   `json:"class_name"`
+	ClassAvatarURL string   `json:"class_avatar_url,omitempty"`
+	Title          string   `json:"title"`
+	DueAt          string   `json:"due_at"`
+	Status         string   `json:"status"`
+	MyStatus       string   `json:"my_status"`
+	MyDone         int      `json:"my_done"`
+	MyTotal        int      `json:"my_total"`
 	MyScore        *float64 `json:"my_score,omitempty"`
 }
 
@@ -333,4 +369,12 @@ type HubDTO struct {
 	MyAssignments []HubAssignmentDTO `json:"my_assignments,omitempty"`
 	NextDue       string             `json:"next_due,omitempty"`
 	MonthAvg      *float64           `json:"month_avg,omitempty"`
+
+	// 截止/活动热力(近 ~18 周每日一格)
+	Heat []HeatCell `json:"heat"`
+}
+
+type HeatCell struct {
+	Date  string `json:"date"` // 2006-01-02
+	Level int    `json:"level"`
 }

@@ -16,15 +16,18 @@ import (
 
 	"mechhub-back/internal/class"
 	"mechhub-back/internal/config"
+	"mechhub-back/internal/llm"
+	"mechhub-back/internal/realtime"
 	"mechhub-back/internal/storage"
 	"mechhub-back/internal/user"
 )
 
 var (
-	ErrForbidden  = errors.New("assignment: forbidden")
-	ErrNotTeacher = errors.New("assignment: not a teacher")
-	ErrClosed     = errors.New("assignment: closed")
-	ErrBadInput   = errors.New("assignment: bad input")
+	ErrForbidden        = errors.New("assignment: forbidden")
+	ErrNotTeacher       = errors.New("assignment: not a teacher")
+	ErrClosed           = errors.New("assignment: closed")
+	ErrAlreadySubmitted = errors.New("assignment: already submitted")
+	ErrBadInput         = errors.New("assignment: bad input")
 )
 
 var allowedFileMime = map[string]string{
@@ -39,11 +42,55 @@ type Service struct {
 	classRepo *class.Repo
 	userRepo  *user.Repo
 	oss       *storage.OSS
+	hub       *realtime.Hub
+	llmSvc    *llm.Service
 	cfg       *config.Config
 }
 
-func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, oss *storage.OSS, cfg *config.Config) *Service {
-	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, oss: oss, cfg: cfg}
+func NewService(repo *Repo, classRepo *class.Repo, userRepo *user.Repo, oss *storage.OSS, hub *realtime.Hub, llmSvc *llm.Service, cfg *config.Config) *Service {
+	return &Service{repo: repo, classRepo: classRepo, userRepo: userRepo, oss: oss, hub: hub, llmSvc: llmSvc, cfg: cfg}
+}
+
+// emitClass 推送作业失效给全班(创建/编辑/删除作业)。
+func (s *Service) emitClass(classID, reason, assignmentID string) {
+	go s.hub.BroadcastToClass(classID, realtime.AssignmentInvalidate{
+		Type:         realtime.FrameAssignmentInvalidate,
+		ClassID:      classID,
+		Reason:       reason,
+		AssignmentID: assignmentID,
+	})
+}
+
+// emitUser 推送给指定用户(提交→教师、批改→学生)。
+func (s *Service) emitUser(userID, classID, reason, assignmentID, submissionID string) {
+	go s.hub.SendToUsers([]string{userID}, realtime.AssignmentInvalidate{
+		Type:         realtime.FrameAssignmentInvalidate,
+		ClassID:      classID,
+		Reason:       reason,
+		AssignmentID: assignmentID,
+		SubmissionID: submissionID,
+	})
+}
+
+// loadImported 取学生从 SoloChat 导入的会话正文。以 owner=学生 身份读取
+// (调用方已确保请求者有权查看该提交:教师 owner 或学生本人)。
+func (s *Service) loadImported(ctx context.Context, sub *Submission) *ImportedRecord {
+	if sub.Source != SourceSoloChat || sub.SoloChatConvID == "" {
+		return nil
+	}
+	msgs, err := s.llmSvc.ListMessages(ctx, sub.StudentID, sub.SoloChatConvID)
+	if err != nil {
+		return &ImportedRecord{Title: sub.SoloChatTitle, Messages: []ImportedMsg{}}
+	}
+	out := make([]ImportedMsg, 0, len(msgs))
+	for i := range msgs {
+		text := flattenParts(msgs[i].Parts)
+		if text == "" {
+			continue
+		}
+		out = append(out, ImportedMsg{Role: msgs[i].Role, Text: text})
+	}
+	return &ImportedRecord{Title: sub.SoloChatTitle, Messages: out}
 }
 
 // ============ 访问控制 ============
@@ -81,6 +128,7 @@ func (s *Service) Hub(ctx context.Context, userID string) (*HubDTO, error) {
 	out := &HubDTO{IsTeacher: isT, Classes: make([]ClassSummaryDTO, 0, len(classes))}
 	var nextDue *time.Time
 	var gradedScores []float64
+	heatCounts := map[string]int{}
 
 	for i := range classes {
 		cls := &classes[i]
@@ -120,6 +168,7 @@ func (s *Service) Hub(ctx context.Context, userID string) (*HubDTO, error) {
 		}
 		for j := range assignments {
 			a := &assignments[j]
+			bumpHeat(heatCounts, a.DueAt)
 			if a.Status == StatusOpen {
 				sum.Open++
 				if sum.NextTitle == "" {
@@ -131,6 +180,11 @@ func (s *Service) Hub(ctx context.Context, userID string) (*HubDTO, error) {
 				allSubs, err := s.repo.ListSubmissionsByAssignment(ctx, a.ID)
 				if err != nil {
 					return nil, err
+				}
+				for k := range allSubs {
+					if allSubs[k].SubmittedAt != nil {
+						bumpHeat(heatCounts, *allSubs[k].SubmittedAt)
+					}
 				}
 				submitted, graded, _ := computeStats(allSubs)
 				pending := submitted - graded
@@ -151,6 +205,9 @@ func (s *Service) Hub(ctx context.Context, userID string) (*HubDTO, error) {
 				}
 				if sub != nil && sub.Status == SubGraded && sub.TotalScore != nil {
 					gradedScores = append(gradedScores, *sub.TotalScore)
+				}
+				if sub != nil && sub.SubmittedAt != nil {
+					bumpHeat(heatCounts, *sub.SubmittedAt)
 				}
 				qc := s.questionCount(ctx, a.ID)
 				out.MyAssignments = append(out.MyAssignments, HubAssignmentDTO{
@@ -178,6 +235,7 @@ func (s *Service) Hub(ctx context.Context, userID string) (*HubDTO, error) {
 	if len(gradedScores) > 0 {
 		out.MonthAvg = mean(gradedScores)
 	}
+	out.Heat = buildHeatSeries(heatCounts)
 	return out, nil
 }
 
@@ -275,6 +333,7 @@ func (s *Service) GetDetail(ctx context.Context, assignmentID, userID string) (*
 				return nil, err
 			}
 			detail.My = sd
+			detail.MyImported = s.loadImported(ctx, sub)
 		}
 	}
 	return detail, nil
@@ -312,6 +371,7 @@ func (s *Service) Create(ctx context.Context, classID, userID string, req Create
 	if err := s.repo.CreateAssignment(ctx, a, qs); err != nil {
 		return nil, err
 	}
+	s.emitClass(classID, realtime.ReasonAssignmentCreated, a.ID)
 	dto := s.toAssignmentDTO(a, qs)
 	return &dto, nil
 }
@@ -356,6 +416,8 @@ func (s *Service) Update(ctx context.Context, assignmentID, userID string, req U
 		}
 	}
 
+	s.emitClass(a.ClassID, realtime.ReasonAssignmentUpdated, assignmentID)
+
 	updated, err := s.repo.GetAssignment(ctx, assignmentID)
 	if err != nil {
 		return nil, err
@@ -380,7 +442,11 @@ func (s *Service) Delete(ctx context.Context, assignmentID, userID string) error
 	if !isTeacher(cls, userID) {
 		return ErrNotTeacher
 	}
-	return s.repo.DeleteAssignment(ctx, assignmentID)
+	if err := s.repo.DeleteAssignment(ctx, assignmentID); err != nil {
+		return err
+	}
+	s.emitClass(a.ClassID, realtime.ReasonAssignmentDeleted, assignmentID)
+	return nil
 }
 
 // ============ 看板(教师)============
@@ -485,6 +551,9 @@ func (s *Service) SaveSubmission(ctx context.Context, assignmentID, userID strin
 		}
 	} else if err != nil {
 		return nil, err
+	} else if sub.Status == SubSubmitted || sub.Status == SubLate || sub.Status == SubGraded {
+		// 已提交即锁定:再写会清掉教师批改痕迹。
+		return nil, ErrAlreadySubmitted
 	}
 
 	sub.Source = normalizeSource(req.Source)
@@ -515,6 +584,9 @@ func (s *Service) SaveSubmission(ctx context.Context, assignmentID, userID strin
 	}
 	if err := s.repo.UpsertSubmission(ctx, sub, answers); err != nil {
 		return nil, err
+	}
+	if req.Submit {
+		s.emitUser(cls.OwnerUserID, a.ClassID, realtime.ReasonSubmissionCreated, assignmentID, sub.ID)
 	}
 	return s.toSubmissionDTO(ctx, sub)
 }
@@ -579,6 +651,7 @@ func (s *Service) GetGradeView(ctx context.Context, submissionID, userID string)
 		Student:    StudentLite{ID: stu.ID, Name: stu.Name, AvatarURL: s.userAvatarURL(stu.ID, stu.AvatarKey)},
 		Submission: *sd,
 		Roster:     roster,
+		Imported:   s.loadImported(ctx, sub),
 	}, nil
 }
 
@@ -606,6 +679,7 @@ func (s *Service) Grade(ctx context.Context, submissionID, userID string, req Gr
 		patch := map[string]any{
 			"comment":     in.Comment,
 			"annotations": marshalJSON(in.Annotations),
+			"highlights":  marshalJSON(in.Highlights),
 		}
 		if in.Score != nil {
 			patch["score"] = *in.Score
@@ -629,6 +703,9 @@ func (s *Service) Grade(ctx context.Context, submissionID, userID string, req Gr
 	if err := s.repo.GradeSubmission(ctx, submissionID, updates, perAnswer); err != nil {
 		return nil, err
 	}
+	if req.Finalize {
+		s.emitUser(sub.StudentID, a.ClassID, realtime.ReasonGraded, a.ID, submissionID)
+	}
 
 	updated, err := s.repo.GetSubmission(ctx, submissionID)
 	if err != nil {
@@ -639,13 +716,16 @@ func (s *Service) Grade(ctx context.Context, submissionID, userID string, req Gr
 
 // ============ 附件 ============
 
-func (s *Service) UploadFiles(ctx context.Context, assignmentID, userID string, files []*multipart.FileHeader) ([]AssignmentFileDTO, error) {
-	a, err := s.repo.GetAssignment(ctx, assignmentID)
+// UploadFiles 班级级上传:教师上传记为题目媒体(question,全班可读),
+// 学生上传记为图片作答(answer,仅本人+教师可读)。
+func (s *Service) UploadFiles(ctx context.Context, classID, userID string, files []*multipart.FileHeader) ([]AssignmentFileDTO, error) {
+	cls, err := s.memberClass(ctx, classID, userID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.memberClass(ctx, a.ClassID, userID); err != nil {
-		return nil, err
+	scope := ScopeAnswer
+	if isTeacher(cls, userID) {
+		scope = ScopeQuestion
 	}
 
 	out := make([]AssignmentFileDTO, 0, len(files))
@@ -665,7 +745,7 @@ func (s *Service) UploadFiles(ctx context.Context, assignmentID, userID string, 
 			return nil, err
 		}
 		ext := filepath.Ext(fh.Filename)
-		key := "assignment/" + assignmentID + "/" + userID + "/" + suffix + ext
+		key := "assignment/" + classID + "/" + scope + "/" + userID + "/" + suffix + ext
 		if err := s.oss.Upload(ctx, key, src, mime); err != nil {
 			src.Close()
 			return nil, err
@@ -674,7 +754,8 @@ func (s *Service) UploadFiles(ctx context.Context, assignmentID, userID string, 
 
 		f := &AssignmentFile{
 			ID:           uuid.NewString(),
-			AssignmentID: assignmentID,
+			ClassID:      classID,
+			Scope:        scope,
 			OwnerUserID:  userID,
 			OSSKey:       key,
 			OriginalName: fh.Filename,
@@ -696,19 +777,13 @@ func (s *Service) OpenFile(ctx context.Context, fileID, userID string) (*Assignm
 	if err != nil {
 		return nil, nil, err
 	}
-	// owner 学生本人,或该班教师(owner)可读
-	if f.OwnerUserID != userID {
-		a, err := s.repo.GetAssignment(ctx, f.AssignmentID)
-		if err != nil {
-			return nil, nil, err
-		}
-		cls, err := s.memberClass(ctx, a.ClassID, userID)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !isTeacher(cls, userID) {
-			return nil, nil, ErrForbidden
-		}
+	cls, err := s.memberClass(ctx, f.ClassID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 题目媒体:全班可读;图片作答:仅 owner 本人或该班教师。
+	if f.Scope == ScopeAnswer && f.OwnerUserID != userID && !isTeacher(cls, userID) {
+		return nil, nil, ErrForbidden
 	}
 	body, err := s.oss.Download(ctx, f.OSSKey)
 	if err != nil {
@@ -750,7 +825,7 @@ func (s *Service) toQuestionDTOs(qs []Question) []QuestionDTO {
 			Points:   q.Points,
 			Options:  parseOptions(q.Options),
 			Answer:   q.Answer,
-			Media:    parseMedia(q.Media),
+			Media:    s.toMediaDTOs(parseMedia(q.Media)),
 			Position: q.Position,
 		})
 	}
@@ -790,9 +865,23 @@ func (s *Service) toSubmissionDTO(ctx context.Context, sub *Submission) (*Submis
 			Score:       ans.Score,
 			Comment:     ans.Comment,
 			Annotations: parseAnnotations(ans.Annotations),
+			Highlights:  parseHighlights(ans.Highlights),
 		})
 	}
 	return dto, nil
+}
+
+func (s *Service) toMediaDTOs(media []Media) []MediaDTO {
+	out := make([]MediaDTO, 0, len(media))
+	for i := range media {
+		out = append(out, MediaDTO{
+			ID:   media[i].ID,
+			Name: media[i].Name,
+			Kind: media[i].Kind,
+			URL:  s.fileURL(media[i].ID),
+		})
+	}
+	return out
 }
 
 func (s *Service) toFileDTO(f *AssignmentFile) AssignmentFileDTO {
@@ -1039,6 +1128,72 @@ func parseStrings(raw string) []string {
 	_ = json.Unmarshal([]byte(raw), &out)
 	if out == nil {
 		return []string{}
+	}
+	return out
+}
+
+func parseHighlights(raw string) []HighlightRange {
+	var out []HighlightRange
+	if raw == "" {
+		return []HighlightRange{}
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		return []HighlightRange{}
+	}
+	return out
+}
+
+// flattenParts 把一条 SoloChat 消息的 parts 压成可读文本:文本直取,
+// 工具调用/结果给一句中文标签(批改记录里多是工具结果)。
+func flattenParts(parts []llm.MessagePart) string {
+	var lines []string
+	for i := range parts {
+		p := &parts[i]
+		switch p.Type {
+		case "text":
+			if t := strings.TrimSpace(p.Text); t != "" {
+				lines = append(lines, t)
+			}
+		case "tool_use":
+			lines = append(lines, "【调用工具:"+p.Name+"】")
+		case "tool_result":
+			lines = append(lines, "【AI 批改 / 工具结果】")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ---- 热力图聚合 ----
+
+const heatDays = 18 * 7
+
+func heatLevel(count int) int {
+	switch {
+	case count <= 0:
+		return 0
+	case count == 1:
+		return 1
+	case count == 2:
+		return 2
+	case count <= 4:
+		return 3
+	default:
+		return 4
+	}
+}
+
+func bumpHeat(counts map[string]int, t time.Time) {
+	counts[t.Format("2006-01-02")]++
+}
+
+// buildHeatSeries 从今天往前 heatDays 天,按日产出有序热力序列。
+func buildHeatSeries(counts map[string]int) []HeatCell {
+	out := make([]HeatCell, 0, heatDays)
+	today := time.Now()
+	for i := heatDays - 1; i >= 0; i-- {
+		d := today.AddDate(0, 0, -i).Format("2006-01-02")
+		out = append(out, HeatCell{Date: d, Level: heatLevel(counts[d])})
 	}
 	return out
 }

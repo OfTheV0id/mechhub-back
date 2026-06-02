@@ -168,7 +168,7 @@ func (h *Handler) UploadFiles(c *gin.Context) {
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(string)
-	out, err := h.svc.UploadFiles(c.Request.Context(), c.Param("assignmentId"), uid, files)
+	out, err := h.svc.UploadFiles(c.Request.Context(), c.Param("classId"), uid, files)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -204,6 +204,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		response.Fail(c, 403, response.CodeForbidden, "仅教师可执行该操作")
 	case errors.Is(err, ErrClosed):
 		response.Fail(c, 400, response.CodeBadRequest, "作业已截止,无法提交")
+	case errors.Is(err, ErrAlreadySubmitted):
+		response.Fail(c, 409, response.CodeBadRequest, "作业已提交,不能再修改")
 	case errors.Is(err, ErrBadInput):
 		response.Fail(c, 400, response.CodeBadRequest, "请求参数有误")
 	default:

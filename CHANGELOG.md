@@ -9,6 +9,32 @@
 
 ---
 
+## Claude 轮 21 — 2026-06-02 — 作业模块第二轮:导入内容/媒体/实时/高亮
+
+把作业模块里几处占位做实。**不接 AI、不自动判分(全人工批改)。**
+
+### ⚠️ 破坏性
+
+- **文件上传端点改为班级级**:`POST /api/assignments/:assignmentId/files` → `POST /api/classes/:classId/assignment-files`(创建作业时题目媒体需先于作业上传)。`assignment_files` 表 `assignment_id` 列 → `class_id` + 新增 `scope`(`question`/`answer`)。前端 `uploadFiles` 需改打新路径。AutoMigrate 自动加新列,旧 `assignment_id` 列残留无害(功能新无真数据)。
+
+### 功能
+
+- **SoloChat 导入内容内嵌**:`assignment.Service` 注入 `*llm.Service`;`GetGradeView`(教师)与 `GetDetail`(学生本人,source=solochat)经 `llm.ListMessages` 取导入会话正文,压成 `ImportedRecord{ title, messages[] }` 随 DTO 返回(`imported` / `my_imported`)。
+- **题目真实媒体**:`Question.Media` 现为 `[{id,name,kind}]` 指向 `assignment_files`;`QuestionDTO.Media` 带解析好的 `url`。教师在创建/编辑作业时上传图片作为题目媒体。
+- **主观题文本高亮**:`assignment_answers` 增 `highlights`(JSON `[{start,end}]`);批改请求 `GradeAnswerInput.highlights` 写入,`AnswerDTO.highlights` 回带。
+- **总览热力图真数据**:`HubDTO.heat` = 近 18 周每日活跃序列(按作业截止 + 提交时间聚合,`[{date,level}]`)。
+- **实时通知**:`assignment.Service` 注入 `*realtime.Hub`,新增帧 `assignment.invalidate`(reason:`assignment_created/updated/deleted/submission_created/graded`)。建/改/删作业→广播全班;学生提交→推教师;教师批改完成→推学生。前端据此实时刷新看板/侧栏/总览。
+
+### 修复
+
+- **已提交即锁定**:`SaveSubmission` 对已 submitted/late/graded 的提交返回 409「作业已提交,不能再修改」,避免学生重存覆盖掉教师批改痕迹。
+
+### 杂项
+
+- `router.go`:`assignment.NewService(..., hub, llmSvc, cfg)` 注入两个新依赖。Postman 文件上传请求路径同步更新。
+
+---
+
 ## Claude 轮 20 — 2026-06-01 — 新增作业(Assignments)模块
 
 新增完整的「作业」板块后端,挂在班级之下,覆盖创建 → 学生作答/提交 → 教师批阅打分全流程。复用 `class` 模块的成员/角色校验(`user.role == "teacher"` 且为班级 owner 才能管理作业/批改),其余成员为学生视角。

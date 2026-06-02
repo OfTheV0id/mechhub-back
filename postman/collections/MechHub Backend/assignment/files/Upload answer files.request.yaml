@@ -1,10 +1,11 @@
 $kind: http-request
-name: Upload answer files
+name: Upload files (question media / answer images)
 description: |-
-  图片作答/媒体上传(multipart,字段名 files,支持 png/jpg/webp/pdf)。
-  返回 file 列表(id/url/name/kind/size),file id 写进 answers 的 image_keys。
-  读取由 GET /api/assignment/files/:fileId(owner 或班级教师)授权。
-url: "{{baseUrl}}/api/assignments/{{assignmentId}}/files"
+  班级级上传(multipart,字段名 files,支持 png/jpg/webp/pdf)。教师上传记为题目媒体
+  (scope=question,全班可读),学生上传记为图片作答(scope=answer,仅本人+教师可读)。
+  返回 file 列表(id/url/name/kind/size):题目媒体的 file id 写进 question.media,
+  图片作答的 file id 写进 answers 的 image_keys。读取走 GET /api/assignment/files/:fileId。
+url: "{{baseUrl}}/api/classes/{{classId}}/assignment-files"
 method: POST
 headers:
   Accept: application/json

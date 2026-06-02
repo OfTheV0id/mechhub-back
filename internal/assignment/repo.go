@@ -208,18 +208,3 @@ func (r *Repo) FindFile(ctx context.Context, id string) (*AssignmentFile, error)
 	}
 	return &f, nil
 }
-
-// FindFileByKey 按 OSS key 反查(serve 时前端只持有 key)。
-func (r *Repo) FindFileByKey(ctx context.Context, assignmentID, key string) (*AssignmentFile, error) {
-	var f AssignmentFile
-	err := r.db.WithContext(ctx).
-		Where("assignment_id = ? AND oss_key = ?", assignmentID, key).
-		First(&f).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &f, nil
-}
