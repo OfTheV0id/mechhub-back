@@ -580,6 +580,8 @@ func (s *Service) SaveSubmission(ctx context.Context, assignmentID, userID strin
 			Choice:       in.Choice,
 			Text:         in.Text,
 			ImageKeys:    marshalJSON(in.ImageKeys),
+			Annotations:  "[]",
+			Highlights:   "[]",
 		})
 	}
 	if err := s.repo.UpsertSubmission(ctx, sub, answers); err != nil {
@@ -1076,12 +1078,18 @@ func mean(xs []float64) *float64 {
 	return &v
 }
 
+// marshalJSON 把切片序列化进 json 列;nil 切片 → "[]" 而非 "null",
+// 避免空字符串/null 写进 MySQL json 列时报「invalid JSON」。
 func marshalJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "[]"
 	}
-	return string(b)
+	s := string(b)
+	if s == "null" {
+		return "[]"
+	}
+	return s
 }
 
 func parseOptions(raw string) []Option {
