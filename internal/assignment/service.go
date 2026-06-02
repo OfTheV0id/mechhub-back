@@ -117,13 +117,12 @@ func (s *Service) materializeRecords(ctx context.Context, submissionID, studentI
 		}
 
 		ref := reference.Reference{Type: in.Kind, SourceChatID: in.SoloChatConvID, SourceTitle: in.Title}
-		switch in.Kind {
-		case reference.TypeGrading:
-			g, ok := reference.FirstGrading(msgs)
-			if !ok {
-				rollback()
-				return nil, nil, ErrBadInput
-			}
+
+		// grading:抽取该会话的 AI 批改结果(grade_with_ocr)。若学生把一条本无批改结果的
+		// 会话选成了「批改记录」(选择器列全部会话,无法预先区分),退化为对话记录(thread)
+		// 快照 —— 保住选择、不让整单提交失败;会话里若含批改,thread 预览里照样能展开。
+		g, hasGrade := reference.FirstGrading(msgs)
+		if in.Kind == reference.TypeGrading && hasGrade {
 			copied, rowIDs, keys, err := s.copySolochatFiles(ctx, studentID, classID, reference.GradingFileIDs(g))
 			allRowIDs = append(allRowIDs, rowIDs...)
 			allKeys = append(allKeys, keys...)
@@ -131,8 +130,9 @@ func (s *Service) materializeRecords(ctx context.Context, submissionID, studentI
 				rollback()
 				return nil, nil, err
 			}
+			ref.Type = reference.TypeGrading
 			ref.Grading = reference.BuildGrading(g, copied)
-		case reference.TypeThread:
+		} else {
 			var fileIDs []string
 			for _, m := range msgs {
 				fileIDs = append(fileIDs, reference.ThreadFileIDs(m)...)
@@ -144,10 +144,8 @@ func (s *Service) materializeRecords(ctx context.Context, submissionID, studentI
 				rollback()
 				return nil, nil, err
 			}
+			ref.Type = reference.TypeThread
 			ref.Segments = reference.BuildThread(msgs, copied)
-		default:
-			rollback()
-			return nil, nil, ErrBadInput
 		}
 
 		refJSON, err := json.Marshal(&ref)
@@ -158,7 +156,7 @@ func (s *Service) materializeRecords(ctx context.Context, submissionID, studentI
 		out = append(out, SubmissionRecord{
 			ID:           uuid.NewString(),
 			SubmissionID: submissionID,
-			Kind:         in.Kind,
+			Kind:         ref.Type,
 			SourceChatID: in.SoloChatConvID,
 			Title:        in.Title,
 			Reference:    string(refJSON),
