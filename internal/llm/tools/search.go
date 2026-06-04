@@ -36,10 +36,13 @@ type SearchOutput struct {
 // NewSearchTool 注册 web_search 工具,内部走 Tavily Search API。
 // 与 OCR/grader 不同,它不依赖 session 缓存,是无状态的外部检索。
 func NewSearchTool() (tool.Tool, error) {
+	client := &http.Client{Timeout: 20 * time.Second}
 	return functiontool.New(functiontool.Config{
 		Name:        "web_search",
 		Description: "联网检索最新或站外信息(新闻、实时数据、文档、事实核查等)。返回结构化结果(answer 摘要 + results[] 来源标题/链接/摘要)。需要时效性信息或自身知识可能过时时调用;纯概念讲解/已知信息不必调用。",
-	}, runSearch)
+	}, func(tctx tool.Context, args SearchArgs) (SearchOutput, error) {
+		return runSearch(tctx, client, args)
+	})
 }
 
 // tavilyRequest / tavilyResponse 对齐 Tavily POST /search 的请求与响应。
@@ -61,7 +64,7 @@ type tavilyResponse struct {
 	} `json:"results"`
 }
 
-func runSearch(tctx tool.Context, args SearchArgs) (SearchOutput, error) {
+func runSearch(tctx tool.Context, client *http.Client, args SearchArgs) (SearchOutput, error) {
 	if args.Query == "" {
 		return SearchOutput{}, fmt.Errorf("query is empty")
 	}
@@ -97,7 +100,7 @@ func runSearch(tctx tool.Context, args SearchArgs) (SearchOutput, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := searchHTTPClient().Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return SearchOutput{}, fmt.Errorf("tavily request: %w", err)
 	}
@@ -122,13 +125,4 @@ func runSearch(tctx tool.Context, args SearchArgs) (SearchOutput, error) {
 		})
 	}
 	return out, nil
-}
-
-var cachedSearchClient *http.Client
-
-func searchHTTPClient() *http.Client {
-	if cachedSearchClient == nil {
-		cachedSearchClient = &http.Client{Timeout: 20 * time.Second}
-	}
-	return cachedSearchClient
 }

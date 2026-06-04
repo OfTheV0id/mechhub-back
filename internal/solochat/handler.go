@@ -117,12 +117,12 @@ func (h *Handler) StopMessage(c *gin.Context) {
 func (h *Handler) UploadAttachment(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, "invalid multipart form")
+		response.Fail(c, 400, response.CodeBadRequest, "表单格式错误")
 		return
 	}
 	files := form.File["files"]
 	if len(files) == 0 {
-		response.Fail(c, 400, response.CodeBadRequest, "missing files")
+		response.Fail(c, 400, response.CodeBadRequest, "请选择文件")
 		return
 	}
 	uid := c.MustGet(middleware.CtxUserID).(string)

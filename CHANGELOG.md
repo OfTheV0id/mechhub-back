@@ -9,6 +9,17 @@
 
 ---
 
+## Claude 轮 23 — 2026-06-04 — 代码质量审查:文案中文化 / 去全局变量 / 规约文档对齐
+
+### 修复
+
+- **用户可见报错改中文**:`solochat` 与 `course` 的 multipart 上传接口,`"invalid multipart form"` → `"表单格式错误"`、`"missing files"` → `"请选择文件"`(规约:所有用户可见字符串中文)。
+
+### 杂项
+
+- **去掉 package 级全局**:`internal/llm/tools/search.go` 的 `cachedSearchClient` 全局 + `searchHTTPClient()` 改为在 `NewSearchTool()`(Bootstrap 期只调一次)内构造 `*http.Client` 并由闭包捕获,`runSearch` 收 client 入参(规约:依赖注入,无全局变量)。无行为变化。
+- **CLAUDE.md 对齐现状**:把"当前 feature module / 已开放接口 / 目录"更新为实际结构(补 `assignment` / `class` / `channel` / `course` / `realtime` / `reference` / `sseutil`),不动设计决策与约定。
+
 ## Claude 轮 22 — 2026-06-02 — 作业模块:图片预览 / 固定满分 / 全屏批注 / 提交批改·聊天记录
 
 ### ⚠️ 破坏性
