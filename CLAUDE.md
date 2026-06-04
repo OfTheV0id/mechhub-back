@@ -49,7 +49,7 @@ mechhub-back/
     │   ├── sessions.go           # ListMessages:读 ADK session events 翻译成 MessageDTO
     │   ├── prompts/              # 系统提示词 + grading 提示词
     │   ├── schemas/              # GradingOutput Go struct + genai.Schema
-    │   └── tools/                # ocr.go (Document AI) + grader.go (Gemini structured output) + image_cache.go
+    │   └── tools/                # ocr.go (Document AI) + grader.go (Gemini structured output) + search.go (Tavily web_search) + image_cache.go
     ├── response/                 # 统一响应 + 错误码常量
     ├── router/                   # 装配路由,不写具体路径
     └── <feature>/                # 功能模块,自带五件套
@@ -61,7 +61,7 @@ mechhub-back/
         └── *.go                  # 其它本模块文件
 ```
 
-当前 feature module:`user/`、`solochat/`(后者还有 `streamer.go` 处理 SSE 写出)。新增模块 = 复制五件套 + `router/router.go` 加一行 mount。
+当前 feature module:`user/`、`solochat/`(含 `streamer.go` 写 SSE + `seed.go`)、`course/`(学习板块,含 `assessment.go` / `statics.go`)、`class/`(班级,含 `invite.go`)、`channel/`(班级频道,含 `cursor.go` / `fork.go` / `share.go`)、`assignment/`(作业)、`realtime/`(WebSocket Hub,`conn.go` / `hub.go`,无 repo —— 内存态)。另有基础设施 `reference/`(跨模块富引用快照)、`sseutil/`(SSE 帧 helper)。新增模块 = 复制五件套 + `router/router.go` 加一行 mount。
 
 ## 命名 / 响应 / 文案
 
@@ -202,6 +202,80 @@ POST   /api/solochat/conversations/:id/messages/stream      发消息,SSE 流式
 POST   /api/solochat/conversations/:id/messages/stop        取消该对话当前 in-flight stream
 POST   /api/solochat/attachments                            multipart 上传附件(image/pdf/text/markdown)
 GET    /api/solochat/attachments/:id                        stream-through 取附件(私有 OSS,经后端)
+
+# 课程 / 学习板块(都需登录)
+GET    /api/course/courses                          列课程
+GET    /api/course/mine                             我的课程
+POST   /api/course/courses                          建课程
+GET    /api/course/courses/:id                      课程详情
+PATCH  /api/course/courses/:id                      改课程
+DELETE /api/course/courses/:id                      删课程
+GET    /api/course/courses/:id/progress             课程进度
+POST   /api/course/courses/:id/nodes                建章节节点
+POST   /api/course/courses/:id/nodes/move           移动节点
+GET    /api/course/nodes/:id                        节点详情
+PATCH  /api/course/nodes/:id                        改节点
+DELETE /api/course/nodes/:id                        删节点
+POST   /api/course/nodes/:id/assess                 评测节点
+POST   /api/course/nodes/:id/steps/:stepId/assess   评测某步骤
+GET    /api/course/nodes/:id/fbd/solution           受力图(FBD)求解
+GET    /api/course/nodes/:id/annotations            列批注
+POST   /api/course/nodes/:id/annotations            建批注
+PATCH  /api/course/annotations/:id                  改批注
+DELETE /api/course/annotations/:id                  删批注
+POST   /api/course/attachments                      上传媒体
+GET    /api/course/attachments/:id                  取媒体
+
+# 班级(都需登录)
+GET    /api/classes                                 列我的班级
+POST   /api/classes                                 建班级
+GET    /api/classes/invite/:token                   预览邀请
+POST   /api/classes/invite/:token/accept            接受邀请
+GET    /api/classes/:classId                        班级详情
+PATCH  /api/classes/:classId                        改班级
+DELETE /api/classes/:classId                        删班级
+GET    /api/classes/:classId/invite                 取邀请(owner)
+POST   /api/classes/:classId/invite/regenerate      重新生成邀请
+DELETE /api/classes/:classId/invite                 禁用邀请
+POST   /api/classes/:classId/avatar                 上传班级头像
+GET    /api/classes/:classId/avatar                 取班级头像
+DELETE /api/classes/:classId/avatar                 删班级头像
+POST   /api/classes/:classId/leave                  退出班级
+GET    /api/classes/:classId/members                列成员
+DELETE /api/classes/:classId/members/:userId        移除成员
+
+# 频道(挂在班级下,都需登录)
+GET    /api/classes/:classId/channels                           列频道
+POST   /api/classes/:classId/channels                           建频道
+GET    /api/classes/:classId/channels/:channelId                频道详情
+PATCH  /api/classes/:classId/channels/:channelId                改频道
+DELETE /api/classes/:classId/channels/:channelId                删频道
+GET    /api/channels/:channelId/messages                        列消息
+POST   /api/channels/:channelId/messages                        发消息
+POST   /api/channels/:channelId/messages/:messageId/fork        fork 消息
+PATCH  /api/channels/:channelId/messages/:messageId             改消息
+DELETE /api/channels/:channelId/messages/:messageId             删消息
+POST   /api/channels/:channelId/messages/:messageId/reactions   切换表情回应
+POST   /api/channels/:channelId/attachments                     上传附件
+GET    /api/channels/:channelId/attachments/:fileId             取附件
+
+# 作业(都需登录)
+GET    /api/assignments/hub                         作业总览
+GET    /api/classes/:classId/assignments            班级作业列表
+POST   /api/classes/:classId/assignments            建作业
+GET    /api/assignments/:assignmentId               作业详情
+PATCH  /api/assignments/:assignmentId               改作业
+DELETE /api/assignments/:assignmentId               删作业
+GET    /api/assignments/:assignmentId/roster        提交看板(教师)
+GET    /api/assignments/:assignmentId/submission    我的提交(学生)
+PUT    /api/assignments/:assignmentId/submission    保存/提交作答(学生)
+POST   /api/classes/:classId/assignment-files       上传题目媒体 / 图片作答
+GET    /api/submissions/:submissionId               批阅视图(教师)
+PATCH  /api/submissions/:submissionId/grade         批改打分(教师)
+GET    /api/assignment/files/:fileId                取附件(owner / 班级教师)
+
+# 实时(WebSocket,需登录)
+GET    /api/ws                                      升级 WebSocket,推班级 / 频道实时事件
 ```
 
 ## 关键设计决策(不要再讨论)
