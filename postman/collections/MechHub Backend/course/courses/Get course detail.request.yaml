@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get course detail
+description: |-
+  课程详情 = 课程元信息 + 章节树(递归,不含正文 content)。
+  响应 CourseDetailDTO `{ course, nodes }`。
+url: "{{baseUrl}}/api/course/courses/{{courseId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 3515

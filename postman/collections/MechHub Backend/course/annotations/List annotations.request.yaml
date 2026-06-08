@@ -1,0 +1,11 @@
+$kind: http-request
+name: List annotations
+description: |-
+  列某节点上当前用户可见的批注:自己的(public + private)+ 他人的 public。
+  响应 `{ annotations: [AnnotationDTO] }`,每项含 anchor_from/anchor_to/quote
+  与 is_mine。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}/annotations"
+method: GET
+headers:
+  Accept: application/json
+order: 3580

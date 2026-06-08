@@ -1,0 +1,9 @@
+$kind: http-request
+name: Delete annotation
+description: |-
+  删批注。仅作者可调。
+url: "{{baseUrl}}/api/course/annotations/{{annotationId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 3595

@@ -1,0 +1,22 @@
+$kind: http-request
+name: Assess step
+description: |-
+  workshop 节点逐步判分:提交某一步(stepId)的作答。全部步骤通过后整节标记
+  通过。请求体同 Assess node(answers / reactions)。
+
+  响应 StepAssessResultDTO `{ results, explanations, passed, node_passed }`,
+  `node_passed` 指整节是否因本步通过而全部完成。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}/steps/{{stepId}}/assess"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "answers": {
+        "q1": ["opt-a"]
+      }
+    }
+order: 3570

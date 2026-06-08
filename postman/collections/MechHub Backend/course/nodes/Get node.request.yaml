@@ -1,0 +1,11 @@
+$kind: http-request
+name: Get node
+description: |-
+  单个节点详情。响应 NodeDetailDTO,`content` 是 TipTap JSON 原样透传,
+  `assessment` 作者视角含答案、学生视角已剥除 correct/explanation。
+  `passed` / `step_state` 反映当前用户进度。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 3550

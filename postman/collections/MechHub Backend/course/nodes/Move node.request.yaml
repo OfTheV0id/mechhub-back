@@ -1,0 +1,24 @@
+$kind: http-request
+name: Move node
+description: |-
+  移动 / 重排章节节点(改父节点与同级位置)。仅作者可调。
+  目标 `parent_id` 为空 = 移到课程顶层;否则须为 section。
+
+  body:
+  - `node_id`(必填,被移动节点 id)
+  - `parent_id`(可选,新父节点 id;null = 顶层)
+  - `position`(同级目标位置索引)
+url: "{{baseUrl}}/api/course/courses/{{courseId}}/nodes/move"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "node_id": "{{nodeId}}",
+      "parent_id": null,
+      "position": 0
+    }
+order: 3545

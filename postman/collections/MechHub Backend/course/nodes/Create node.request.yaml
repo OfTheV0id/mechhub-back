@@ -1,0 +1,25 @@
+$kind: http-request
+name: Create node
+description: |-
+  在课程下建章节节点。仅作者可调。`parent_id` 为空 = 课程顶层;否则父节点
+  必须是 `section`(否则 400)。响应 NodeDetailDTO,把返回的 id 存进
+  `nodeId` 变量。
+
+  body:
+  - `parent_id`(可选,父节点 id,须为 section)
+  - `title`(必填,1-200 字符)
+  - `kind`(可选,section|theory|workshop|lab|quiz,默认 theory)
+url: "{{baseUrl}}/api/course/courses/{{courseId}}/nodes"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "parent_id": null,
+      "title": "第一章 静力学基础",
+      "kind": "section"
+    }
+order: 3540

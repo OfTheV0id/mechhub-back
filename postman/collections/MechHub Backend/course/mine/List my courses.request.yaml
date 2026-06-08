@@ -1,0 +1,10 @@
+$kind: http-request
+name: List my courses
+description: |-
+  列出当前用户作为作者创建的课程(含未发布)。teacher 创作面板用。
+  响应 `{ courses: [CourseDTO] }`。
+url: "{{baseUrl}}/api/course/mine"
+method: GET
+headers:
+  Accept: application/json
+order: 3505

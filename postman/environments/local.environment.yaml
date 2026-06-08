@@ -24,3 +24,13 @@ values:
     value: ''
   - key: fileId
     value: ''
+  - key: courseId
+    value: ''
+  - key: nodeId
+    value: ''
+  - key: stepId
+    value: ''
+  - key: annotationId
+    value: ''
+  - key: mediaId
+    value: ''

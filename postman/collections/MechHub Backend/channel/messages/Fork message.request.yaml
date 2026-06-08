@@ -1,0 +1,13 @@
+$kind: http-request
+name: Fork message
+description: |-
+  把频道里的一条消息 fork 成一个新的 solochat 对话,以便继续向 AI 追问。
+  班级成员可调。后端按消息内容(含富引用快照 / 附件)在当前用户名下新建
+  一个 solochat 对话,返回新对话 DTO,前端据此跳转到 solochat。
+
+  无请求体。
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages/{{messageId}}/fork"
+method: POST
+headers:
+  Accept: application/json
+order: 6240

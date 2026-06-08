@@ -1,0 +1,9 @@
+$kind: http-request
+name: Delete course
+description: |-
+  删课程(连同章节节点、批注、进度)。仅作者可调。
+url: "{{baseUrl}}/api/course/courses/{{courseId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 3525

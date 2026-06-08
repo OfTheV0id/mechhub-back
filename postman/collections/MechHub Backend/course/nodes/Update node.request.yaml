@@ -1,0 +1,25 @@
+$kind: http-request
+name: Update node
+description: |-
+  改节点。仅作者可调。所有字段可选,只传要改的。`content` 是 TipTap
+  (ProseMirror)JSON 文档,`assessment` 是判定规格(含答案)JSON,结构随
+  kind 而异:theory/quiz 的 questions、workshop 的 steps、lab 的 fbd。
+
+  body(均可选):
+  - `title`(1-200 字符)
+  - `kind`(section|theory|workshop|lab|quiz)
+  - `content`(TipTap JSON 文档)
+  - `assessment`(判定规格 JSON)
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "1.1 力的概念",
+      "content": { "type": "doc", "content": [] }
+    }
+order: 3555

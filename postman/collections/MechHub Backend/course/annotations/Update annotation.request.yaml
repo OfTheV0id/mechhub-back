@@ -1,0 +1,21 @@
+$kind: http-request
+name: Update annotation
+description: |-
+  改批注。仅作者可调。字段可选,只传要改的。
+
+  body(均可选):
+  - `body`(1-4000 字符)
+  - `visibility`(public|private)
+url: "{{baseUrl}}/api/course/annotations/{{annotationId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "body": "(已修订)补充矢量形式说明",
+      "visibility": "public"
+    }
+order: 3590

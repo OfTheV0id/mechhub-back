@@ -1,0 +1,10 @@
+$kind: http-request
+name: List courses
+description: |-
+  列出所有已发布(Published)课程。任意登录用户可调。
+  响应 `{ courses: [CourseDTO] }`,每项含 is_author / node_count。
+url: "{{baseUrl}}/api/course/courses"
+method: GET
+headers:
+  Accept: application/json
+order: 3500

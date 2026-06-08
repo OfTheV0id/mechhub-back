@@ -1,0 +1,22 @@
+$kind: http-request
+name: Create course
+description: |-
+  新建课程。仅 teacher 可调(否则 403)。新课程默认 published=false。
+  响应 CourseDTO。把返回的 id 存进 `courseId` 变量供后续请求使用。
+
+  body:
+  - `title`(必填,1-200 字符)
+  - `description`(可选,≤2000 字符)
+url: "{{baseUrl}}/api/course/courses"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "理论力学入门",
+      "description": "刚体静力学与受力分析基础"
+    }
+order: 3510

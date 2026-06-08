@@ -1,0 +1,11 @@
+$kind: http-request
+name: Get course progress
+description: |-
+  当前用户在该课程的聚合学习进度。响应 CourseProgressDTO
+  `{ course_id, total, completed, nodes: [{ node_id, completed }] }`,
+  total = 可完成(有判定)节点数。
+url: "{{baseUrl}}/api/course/courses/{{courseId}}/progress"
+method: GET
+headers:
+  Accept: application/json
+order: 3530
