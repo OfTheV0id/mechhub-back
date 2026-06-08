@@ -1,0 +1,28 @@
+$kind: http-request
+name: Create annotation
+description: |-
+  在某内容节点的选区上建划词批注。任意登录用户可调(批注属创建者)。
+  响应 AnnotationDTO,把返回的 id 存进 `annotationId` 变量。
+
+  body:
+  - `anchor_from`(必填,ProseMirror 选区起点)
+  - `anchor_to`(必填,选区终点)
+  - `quote`(可选,选中文本,≤2000 字符,供重锚 / 判 orphan)
+  - `body`(必填,批注正文,1-4000 字符)
+  - `visibility`(必填,public|private)
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}/annotations"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "anchor_from": 10,
+      "anchor_to": 24,
+      "quote": "牛顿第二定律",
+      "body": "这里需要补充矢量形式的说明",
+      "visibility": "private"
+    }
+order: 3585

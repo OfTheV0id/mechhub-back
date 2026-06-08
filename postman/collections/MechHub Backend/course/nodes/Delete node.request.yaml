@@ -1,0 +1,9 @@
+$kind: http-request
+name: Delete node
+description: |-
+  删节点(连同子节点、批注、进度)。仅作者可调。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 3560

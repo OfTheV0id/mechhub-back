@@ -1,0 +1,25 @@
+$kind: http-request
+name: Update course
+description: |-
+  改课程。仅作者可调。`published` 传 true 发布、false 下架。
+  `cover_file_id` 传先前 Upload media 返回的图片 media id 设封面。
+
+  body:
+  - `title`(必填,1-200 字符)
+  - `description`(可选,≤2000 字符)
+  - `cover_file_id`(可选)
+  - `published`(可选,布尔)
+url: "{{baseUrl}}/api/course/courses/{{courseId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "理论力学入门(修订)",
+      "description": "刚体静力学与受力分析基础",
+      "published": true
+    }
+order: 3520

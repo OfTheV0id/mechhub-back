@@ -1,0 +1,20 @@
+$kind: collection
+description: >-
+  课程 / 学习板块。teacher 创作课程,扁平列出(无科目层级),作者自行决定是否
+  Published。所有端点需登录(session_id cookie)。
+
+
+  数据模型:`courses` + `course_nodes`(自引用邻接表,无限嵌套章节树)+
+  `course_files`(媒体,私有 OSS stream-through)+ `course_node_progress`
+  (每用户每节点一行)+ `course_annotations`(划词批注)。主键全 UUID。
+
+
+  节点 `kind`:`section`(纯分组容器,不可完成)/ `theory` / `workshop` /
+  `lab` / `quiz`。判定规格(含答案)存在节点 `assessment` JSON,学生 DTO 一律
+  剥除答案,判分只在后端:theory/quiz 走 `/assess`,workshop 逐步走
+  `/steps/:stepId/assess`,lab 受力图(FBD)走 `/assess` 传 reactions。
+
+
+  正文 `content` 是 TipTap(ProseMirror)JSON 文档原样透传。批注锚在某内容节点
+  的选区 [anchor_from, anchor_to),Visibility 控制 public / private。
+order: 3500

@@ -9,6 +9,16 @@
 
 ---
 
+## Claude 轮 24 — 2026-06-08 — Postman 同步:补全 course 模块与 channel 遗漏接口
+
+### 杂项
+
+- **补全 Postman 集合**:此前 `course/`(学习板块)整组 21 个接口与 `channel/` 的 `Fork message`、`Toggle reaction` 两个接口未进 Postman(规约:每加 HTTP 接口必须同步 Postman)。本轮按 Spec Hub 文件夹格式全部补齐:
+  - 新增分组 `course/`(order 3500),含 `courses/`(列表 / 我的 / 建 / 详情 / 改 / 删 / 进度)、`nodes/`(建 / 移动 / 详情 / 改 / 删 / 整节判分 / 逐步判分 / FBD 解)、`annotations/`(列 / 建 / 改 / 删)、`attachments/`(传媒体 / 取媒体)。
+  - 补 `channel/messages/` 的 `Fork message`、`Toggle reaction`。
+  - 集合根 `.resources/definition.yaml` 与 `environments/local.environment.yaml` 同步新增占位变量 `courseId / nodeId / stepId / annotationId / mediaId`。
+- 无代码 / API 行为变化,纯文档资产同步。
+
 ## Claude 轮 23 — 2026-06-04 — 代码质量审查:文案中文化 / 去全局变量 / 规约文档对齐
 
 ### 修复

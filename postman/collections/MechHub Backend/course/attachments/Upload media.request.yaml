@@ -1,0 +1,19 @@
+$kind: http-request
+name: Upload media
+description: |-
+  上传课程媒体(图 / 音 / 视频)到私有 OSS。Multipart 字段名 `files`(可多
+  文件)。响应 `{ media: [MediaDTO] }`,每项含 id / kind / mime_type / url。
+  返回的 media id 可用于课程封面(Update course 的 cover_file_id)或正文嵌入。
+url: "{{baseUrl}}/api/course/attachments"
+method: POST
+headers:
+  Accept: application/json
+body:
+  type: formdata
+  content:
+    - type: file
+      key: files
+      src: ""
+      description: 课程媒体(图 / 音 / 视频)
+      disabled: false
+order: 3600

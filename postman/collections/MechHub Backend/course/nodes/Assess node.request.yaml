@@ -1,0 +1,22 @@
+$kind: http-request
+name: Assess node
+description: |-
+  提交整节作答,后端判分。theory/quiz 用 `answers`(questionId → 选中的
+  optionId 数组);lab(受力图 FBD)用 `reactions`(supportId → 反力矢量
+  {fx, fy})。判分只在后端,全对则该节点标记通过。
+
+  响应 AssessResultDTO `{ results: {qid: bool}, explanations, passed }`。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}/assess"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "answers": {
+        "q1": ["opt-a"]
+      }
+    }
+order: 3565

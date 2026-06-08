@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get FBD solution
+description: |-
+  受力图(FBD)标准解,作者预览用:返回各支座的标准反力矢量。
+  响应 FBDSolutionDTO `{ reactions: {supportId: {fx, fy}} }`。
+url: "{{baseUrl}}/api/course/nodes/{{nodeId}}/fbd/solution"
+method: GET
+headers:
+  Accept: application/json
+order: 3575

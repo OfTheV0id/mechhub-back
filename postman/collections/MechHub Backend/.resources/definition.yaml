@@ -50,3 +50,8 @@ variables:
   questionId: ""
   questionId2: ""
   fileId: ""
+  courseId: ""
+  nodeId: ""
+  stepId: ""
+  annotationId: ""
+  mediaId: ""

@@ -1,0 +1,10 @@
+$kind: http-request
+name: Get media
+description: |-
+  stream-through 取课程媒体(私有 OSS,经后端)。响应带
+  `Cache-Control: public, max-age=86400`,Content-Type 为媒体原 MIME。
+url: "{{baseUrl}}/api/course/attachments/{{mediaId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 3605

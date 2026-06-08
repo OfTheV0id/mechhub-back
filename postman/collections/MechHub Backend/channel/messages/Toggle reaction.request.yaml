@@ -1,0 +1,20 @@
+$kind: http-request
+name: Toggle reaction
+description: |-
+  对一条消息切换 emoji 表情回应。班级成员可调。同一 emoji 再点一次取消。
+  成功后 WS 广播 `channel.message.updated` 帧(含更新后的 reactions 聚合)。
+
+  body:
+  - `emoji`(必填,1-32 字符)—— 单个 emoji 字符或短码
+url: "{{baseUrl}}/api/channels/{{channelId}}/messages/{{messageId}}/reactions"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "emoji": "👍"
+    }
+order: 6250
