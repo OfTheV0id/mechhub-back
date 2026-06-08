@@ -33,12 +33,13 @@ var (
 type Service struct {
 	repo     *Repo
 	userRepo *user.Repo
+	userSvc  *user.Service
 	oss      *storage.OSS
 	cfg      *config.Config
 }
 
-func NewService(repo *Repo, userRepo *user.Repo, oss *storage.OSS, cfg *config.Config) *Service {
-	return &Service{repo: repo, userRepo: userRepo, oss: oss, cfg: cfg}
+func NewService(repo *Repo, userRepo *user.Repo, userSvc *user.Service, oss *storage.OSS, cfg *config.Config) *Service {
+	return &Service{repo: repo, userRepo: userRepo, userSvc: userSvc, oss: oss, cfg: cfg}
 }
 
 // IsTeacher 判断用户角色是否 teacher(唯一能建课/编辑的角色)。
@@ -80,7 +81,8 @@ func (s *Service) GetCourseDetail(ctx context.Context, userID, courseID string) 
 	if err != nil {
 		return nil, err
 	}
-	dto := toCourseDTO(c, len(nodes), s.coverURL(c.CoverKey), c.AuthorUserID == userID)
+	name, avatarURL := s.authorInfo(ctx, c.AuthorUserID)
+	dto := toCourseDTO(c, len(nodes), s.coverURL(c.CoverKey), c.AuthorUserID == userID, name, avatarURL)
 	return &CourseDetailDTO{Course: dto, Nodes: buildTree(nodes, nil)}, nil
 }
 
@@ -103,7 +105,7 @@ func (s *Service) CreateCourse(ctx context.Context, userID string, req CreateCou
 	if err := s.repo.InsertCourse(ctx, c); err != nil {
 		return nil, err
 	}
-	dto := toCourseDTO(c, 0, "", true)
+	dto := toCourseDTO(c, 0, "", true, "", "")
 	return &dto, nil
 }
 
@@ -787,7 +789,8 @@ func (s *Service) courseDTOByID(ctx context.Context, userID, courseID string) (*
 	if err != nil {
 		return nil, err
 	}
-	dto := toCourseDTO(c, counts[courseID], s.coverURL(c.CoverKey), c.AuthorUserID == userID)
+	name, avatarURL := s.authorInfo(ctx, c.AuthorUserID)
+	dto := toCourseDTO(c, counts[courseID], s.coverURL(c.CoverKey), c.AuthorUserID == userID, name, avatarURL)
 	return &dto, nil
 }
 
@@ -802,7 +805,7 @@ func (s *Service) toCourseDTOs(ctx context.Context, userID string, list []Course
 	}
 	out := make([]CourseDTO, len(list))
 	for i := range list {
-		out[i] = toCourseDTO(&list[i], counts[list[i].ID], s.coverURL(list[i].CoverKey), list[i].AuthorUserID == userID)
+		out[i] = toCourseDTO(&list[i], counts[list[i].ID], s.coverURL(list[i].CoverKey), list[i].AuthorUserID == userID, "", "")
 	}
 	return out, nil
 }
@@ -823,18 +826,29 @@ func (s *Service) nameCache(ctx context.Context) func(string) string {
 	}
 }
 
-func toCourseDTO(c *Course, nodeCount int, coverURL string, isAuthor bool) CourseDTO {
+// authorInfo 查课程作者的展示名 + 头像 URL(无头像返回空串),供课程详情展示创建人。
+func (s *Service) authorInfo(ctx context.Context, authorUserID string) (name, avatarURL string) {
+	u, err := s.userRepo.FindByID(ctx, authorUserID)
+	if err != nil {
+		return "", ""
+	}
+	return u.Name, s.userSvc.AvatarURL(authorUserID, u.AvatarKey)
+}
+
+func toCourseDTO(c *Course, nodeCount int, coverURL string, isAuthor bool, authorName, authorAvatarURL string) CourseDTO {
 	return CourseDTO{
-		ID:          c.ID,
-		Title:       c.Title,
-		Description: c.Description,
-		CoverURL:    coverURL,
-		AuthorID:    c.AuthorUserID,
-		Published:   c.Published,
-		IsAuthor:    isAuthor,
-		NodeCount:   nodeCount,
-		CreatedAt:   c.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   c.UpdatedAt.Format(time.RFC3339),
+		ID:              c.ID,
+		Title:           c.Title,
+		Description:     c.Description,
+		CoverURL:        coverURL,
+		AuthorID:        c.AuthorUserID,
+		AuthorName:      authorName,
+		AuthorAvatarURL: authorAvatarURL,
+		Published:       c.Published,
+		IsAuthor:        isAuthor,
+		NodeCount:       nodeCount,
+		CreatedAt:       c.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:       c.UpdatedAt.Format(time.RFC3339),
 	}
 }
 

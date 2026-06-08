@@ -9,6 +9,14 @@
 
 ---
 
+## Claude 轮 25 — 2026-06-08 — 课程详情返回创建人信息
+
+### 功能
+
+- **课程详情响应新增创建人信息**:`GET /api/course/courses/:id` 的 `course` 对象新增 `author_name` 与 `author_avatar_url`(无头像时省略),供前端在课程页展示创建人头像 + 名字。仅详情路径(含 `PATCH` 后回包)填充,列表接口不带,为 additive 改动、非破坏。`course.Service` 新注入 `*user.Service` 以复用其 `AvatarURL` 拼 stream-through 头像地址。
+
+---
+
 ## Claude 轮 24 — 2026-06-08 — Postman 同步:补全 course 模块与 channel 遗漏接口
 
 ### 杂项
