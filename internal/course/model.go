@@ -108,16 +108,18 @@ func (Annotation) TableName() string { return "course_annotations" }
 // ---- DTO ----
 
 type CourseDTO struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	CoverURL    string `json:"cover_url,omitempty"`
-	AuthorID    string `json:"author_id"`
-	Published   bool   `json:"published"`
-	IsAuthor    bool   `json:"is_author"`
-	NodeCount   int    `json:"node_count"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	CoverURL        string `json:"cover_url,omitempty"`
+	AuthorID        string `json:"author_id"`
+	AuthorName      string `json:"author_name,omitempty"`
+	AuthorAvatarURL string `json:"author_avatar_url,omitempty"`
+	Published       bool   `json:"published"`
+	IsAuthor        bool   `json:"is_author"`
+	NodeCount       int    `json:"node_count"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 // CourseNodeDTO 课程详情里的章节树项(递归,不含正文 content)。

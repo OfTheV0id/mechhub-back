@@ -44,7 +44,7 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 
 	// Course(学习板块)
 	courseRepo := course.NewRepo(db)
-	courseSvc := course.NewService(courseRepo, userRepo, oss, cfg)
+	courseSvc := course.NewService(courseRepo, userRepo, userSvc, oss, cfg)
 	courseHandler := course.NewHandler(courseSvc)
 	course.Mount(api, courseHandler, auth)
 
