@@ -9,6 +9,23 @@
 
 ---
 
+## Claude 轮 26 — 2026-06-08 — Workshop/Lab 改用受力图判定
+
+### 破坏性 ⚠️
+
+- **workshop 判定从「逐步小测」改为「解受力图」**,与 lab 同一条 FBD 判分路径。前端 / 调用方需要跟着改:
+  - **移除端点** `POST /api/course/nodes/:id/steps/:stepId/assess`(连带 `StepAssessResultDTO`)。workshop 现在和 lab 一样调 `POST /api/course/nodes/:id/assess`,body 传 `{ reactions: { [supportId]: { fx, fy } } }`。
+  - **`GET /api/course/nodes/:id`(节点详情)去掉 `step_state` 字段**(workshop 完成状态现在是二元 `passed`,同 lab)。
+  - **`assessment.steps[]` 语义变更**:每步从「讲解 + 小测(`content` + `questions`)」改为**纯文字引导**(只剩 `{ id, content }`,`questions` 移除)。workshop 的右栏「一步步指导」用它,不参与判定。
+  - **workshop 的 `assessment` 现在需含 `fbd`**(支座 + 载荷 + 容差)才算可判定(`completable`);判定规格与 lab 完全一致。
+- `GET /api/course/nodes/:id/fbd/solution`(作者预览标准答案)现在 workshop 节点也可用。
+
+### 杂项
+
+- 删除后端 workshop 逐步进度残留:`progressDetail` / `allStepsPassed` / `AssessStep`;同步删除 Postman `course/nodes/Assess step`。
+
+---
+
 ## Claude 轮 25 — 2026-06-08 — 课程详情返回创建人信息
 
 ### 功能

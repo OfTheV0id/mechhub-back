@@ -153,8 +153,6 @@ type NodeDetailDTO struct {
 	Content     json.RawMessage `json:"content"`
 	// Assessment:作者视角原样(含答案);学生视角已剥除 correct/explanation。
 	Assessment json.RawMessage `json:"assessment"`
-	// StepState workshop 逐步通过状态 {stepId:true}(当前用户);其余 kind 为空。
-	StepState map[string]bool `json:"step_state,omitempty"`
 }
 
 type AnnotationDTO struct {
@@ -237,14 +235,6 @@ type AssessResultDTO struct {
 	Results      map[string]bool   `json:"results"`
 	Explanations map[string]string `json:"explanations,omitempty"`
 	Passed       bool              `json:"passed"`
-}
-
-// StepAssessResultDTO workshop 单步判分:该步是否通过 + 整节是否通过。
-type StepAssessResultDTO struct {
-	Results      map[string]bool   `json:"results"`
-	Explanations map[string]string `json:"explanations,omitempty"`
-	Passed       bool              `json:"passed"`
-	NodePassed   bool              `json:"node_passed"`
 }
 
 type MoveNodeReq struct {

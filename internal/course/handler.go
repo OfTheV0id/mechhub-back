@@ -184,20 +184,6 @@ func (h *Handler) AssessNode(c *gin.Context) {
 	response.OK(c, dto)
 }
 
-func (h *Handler) AssessStep(c *gin.Context) {
-	var req AssessNodeReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, 400, response.CodeBadRequest, err.Error())
-		return
-	}
-	dto, err := h.svc.AssessStep(c.Request.Context(), uid(c), c.Param("id"), c.Param("stepId"), req)
-	if err != nil {
-		h.failErr(c, err)
-		return
-	}
-	response.OK(c, dto)
-}
-
 func (h *Handler) FBDSolution(c *gin.Context) {
 	dto, err := h.svc.FBDSolution(c.Request.Context(), uid(c), c.Param("id"))
 	if err != nil {

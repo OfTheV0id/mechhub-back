@@ -172,12 +172,8 @@ func (s *Service) nodeDetailDTO(ctx context.Context, n *CourseNode, isAuthor boo
 		assessment = studentAssessment(n.Assessment)
 	}
 	passed := false
-	var stepState map[string]bool
 	if p, err := s.repo.FindProgress(ctx, userID, n.ID); err == nil {
 		passed = p.Completed
-		if n.Kind == KindWorkshop {
-			stepState = parseProgressDetail(p.Detail).Steps
-		}
 	}
 	return NodeDetailDTO{
 		ID:          n.ID,
@@ -190,7 +186,6 @@ func (s *Service) nodeDetailDTO(ctx context.Context, n *CourseNode, isAuthor boo
 		IsAuthor:    isAuthor,
 		Content:     rawContent(n.Content),
 		Assessment:  assessment,
-		StepState:   stepState,
 	}
 }
 
@@ -399,7 +394,7 @@ func (s *Service) AssessNode(ctx context.Context, userID, nodeID string, req Ass
 	var results map[string]bool
 	var explanations map[string]string
 	var passed bool
-	if n.Kind == KindLab {
+	if n.Kind == KindLab || n.Kind == KindWorkshop {
 		a := parseAssessment(n.Assessment)
 		sol, err := solveFBD(a.FBD)
 		if err != nil {
@@ -442,62 +437,6 @@ func (s *Service) AssessNode(ctx context.Context, userID, nodeID string, req Ass
 		}
 	}
 	return &AssessResultDTO{Results: results, Explanations: explanations, Passed: passed}, nil
-}
-
-// AssessStep 判 workshop 某一步的小测;过该步则记进度,所有有题步骤都过则整节通过(只升不降)。
-func (s *Service) AssessStep(ctx context.Context, userID, nodeID, stepID string, req AssessNodeReq) (*StepAssessResultDTO, error) {
-	n, err := s.repo.FindNode(ctx, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	c, err := s.repo.FindCourse(ctx, n.CourseID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.assertCanView(userID, c); err != nil {
-		return nil, err
-	}
-	a := parseAssessment(n.Assessment)
-	if a == nil {
-		return nil, ErrInvalidState
-	}
-	var step *Step
-	for i := range a.Steps {
-		if a.Steps[i].ID == stepID {
-			step = &a.Steps[i]
-			break
-		}
-	}
-	if step == nil {
-		return nil, ErrNotFound
-	}
-	results, explanations, stepPassed := gradeQuestions(step.Questions, req.Answers)
-
-	now := time.Now()
-	prog, err := s.repo.FindProgress(ctx, userID, nodeID)
-	if errors.Is(err, ErrNotFound) {
-		prog = &NodeProgress{ID: uuid.NewString(), UserID: userID, NodeID: nodeID, CourseID: n.CourseID}
-	} else if err != nil {
-		return nil, err
-	}
-	detail := parseProgressDetail(prog.Detail)
-	if stepPassed {
-		detail.Steps[stepID] = true
-	}
-	prog.Detail = detail.marshal()
-	if !prog.Completed && allStepsPassed(a, detail) {
-		prog.Completed = true
-		prog.CompletedAt = &now
-	}
-	if err := s.repo.SaveProgress(ctx, prog); err != nil {
-		return nil, err
-	}
-	return &StepAssessResultDTO{
-		Results:      results,
-		Explanations: explanations,
-		Passed:       stepPassed,
-		NodePassed:   prog.Completed,
-	}, nil
 }
 
 // FBDSolution 作者出题时预览标准解(各支座反力)。仅作者可调。

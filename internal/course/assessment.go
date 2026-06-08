@@ -60,11 +60,11 @@ type QOption struct {
 	Text string `json:"text"`
 }
 
-// Step workshop 的一步:讲解内容 + 一组小测(全对才算过这步;无题=纯讲解步,免检)。
+// Step workshop 右栏「一步步指导」的一步:纯文字讲解(TipTap JSON),不带判定。
+// workshop 的判定走 FBD(中间实操区),与 lab 同一条路径。
 type Step struct {
-	ID        string          `json:"id"`
-	Content   json.RawMessage `json:"content"`
-	Questions []Question      `json:"questions,omitempty"`
+	ID      string          `json:"id"`
+	Content json.RawMessage `json:"content"`
 }
 
 func parseAssessment(raw string) *Assessment {
@@ -88,25 +88,21 @@ func assessmentGradable(kind, raw string) bool {
 	switch kind {
 	case KindTheory, KindQuiz:
 		return len(a.Questions) > 0
-	case KindWorkshop:
-		return len(a.Steps) > 0
-	case KindLab:
+	case KindWorkshop, KindLab:
 		return a.FBD != nil && len(a.FBD.Supports) > 0
 	default:
 		return false
 	}
 }
 
-// studentAssessment 给学生看的版本:剥掉所有题目的 correct 与 explanation(顶层 + 步内)。
+// studentAssessment 给学生看的版本:剥掉选择题的 correct 与 explanation。
+// workshop 的 steps 是纯文字引导,原样下发。
 func studentAssessment(raw string) json.RawMessage {
 	a := parseAssessment(raw)
 	if a == nil {
 		return json.RawMessage("null")
 	}
 	stripQuestions(a.Questions)
-	for i := range a.Steps {
-		stripQuestions(a.Steps[i].Questions)
-	}
 	out, err := json.Marshal(a)
 	if err != nil {
 		return json.RawMessage("null")
@@ -160,47 +156,6 @@ func sameSet(a, b []string) bool {
 	}
 	for _, x := range a {
 		if !seen[x] {
-			return false
-		}
-	}
-	return true
-}
-
-// ---- workshop 逐步进度(存 NodeProgress.Detail)----
-
-type progressDetail struct {
-	Steps map[string]bool `json:"steps,omitempty"`
-}
-
-func parseProgressDetail(raw string) progressDetail {
-	t := strings.TrimSpace(raw)
-	if t != "" && t != "null" {
-		var p progressDetail
-		if json.Unmarshal([]byte(t), &p) == nil && p.Steps != nil {
-			return p
-		}
-	}
-	return progressDetail{Steps: map[string]bool{}}
-}
-
-func (d progressDetail) marshal() string {
-	b, err := json.Marshal(d)
-	if err != nil {
-		return "null"
-	}
-	return string(b)
-}
-
-// allStepsPassed 所有「有题」的步骤都已通过,则整节通过(纯讲解步免检)。
-func allStepsPassed(a *Assessment, d progressDetail) bool {
-	if a == nil || len(a.Steps) == 0 {
-		return false
-	}
-	for _, st := range a.Steps {
-		if len(st.Questions) == 0 {
-			continue
-		}
-		if !d.Steps[st.ID] {
 			return false
 		}
 	}
