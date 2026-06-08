@@ -21,7 +21,6 @@ func Mount(g *gin.RouterGroup, h *Handler, auth gin.HandlerFunc) {
 	authed.PATCH("/course/nodes/:id", h.UpdateNode)
 	authed.DELETE("/course/nodes/:id", h.DeleteNode)
 	authed.POST("/course/nodes/:id/assess", h.AssessNode)
-	authed.POST("/course/nodes/:id/steps/:stepId/assess", h.AssessStep)
 	authed.GET("/course/nodes/:id/fbd/solution", h.FBDSolution)
 
 	// 批注
