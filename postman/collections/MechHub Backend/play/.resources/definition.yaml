@@ -1,0 +1,8 @@
+$kind: collection
+description: >-
+  Play 力学沙盒场景持久化。需要登录 session_id cookie。
+
+
+  场景是 owned-by-user 的命名记录,`structure` 为前端沙盒的完整结构 JSON
+  (nodes / members / supports / loads)。所有接口按 user_id 作用域,换用户取不到。
+order: 3100

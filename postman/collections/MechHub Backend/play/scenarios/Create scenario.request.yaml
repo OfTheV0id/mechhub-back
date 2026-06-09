@@ -1,0 +1,35 @@
+$kind: http-request
+name: Create scenario
+description: |-
+  Save the current sandbox as a named scenario. `structure` is the full scene JSON object (nodes / members / supports / loads), passed natively (not a stringified blob). Name is 1-200 chars.
+url: "{{baseUrl}}/api/play/scenarios"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "三角桁架",
+      "structure": {
+        "nodes": {
+          "n1": { "id": "n1", "x": 0, "y": 0 },
+          "n2": { "id": "n2", "x": 4, "y": 0 },
+          "n3": { "id": "n3", "x": 2, "y": 3 }
+        },
+        "members": {
+          "m1": { "id": "m1", "a": "n1", "b": "n2", "kind": "truss" },
+          "m2": { "id": "m2", "a": "n2", "b": "n3", "kind": "truss" },
+          "m3": { "id": "m3", "a": "n3", "b": "n1", "kind": "truss" }
+        },
+        "supports": {
+          "s1": { "id": "s1", "node": "n1", "type": "pin", "angle": 0 },
+          "s2": { "id": "s2", "node": "n2", "type": "roller", "angle": 90 }
+        },
+        "loads": {
+          "l1": { "id": "l1", "node": "n3", "fx": 0, "fy": -10, "m": 0 }
+        }
+      }
+    }
+order: 1200

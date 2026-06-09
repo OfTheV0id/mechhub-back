@@ -13,6 +13,7 @@ import (
 	"mechhub-back/internal/llm"
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/oauth"
+	"mechhub-back/internal/play"
 	"mechhub-back/internal/router"
 	"mechhub-back/internal/session"
 	"mechhub-back/internal/solochat"
@@ -33,6 +34,7 @@ func main() {
 		&session.Session{},
 		&solochat.Conversation{},
 		&solochat.UploadedFile{},
+		&play.Scenario{},
 		&class.Class{},
 		&class.Member{},
 		&channel.Channel{},

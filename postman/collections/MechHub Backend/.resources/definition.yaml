@@ -39,6 +39,7 @@ variables:
   googleAuthState: ""
   conversationId: ""
   attachmentId: ""
+  scenarioId: ""
   userId: ""
   classId: ""
   inviteToken: ""

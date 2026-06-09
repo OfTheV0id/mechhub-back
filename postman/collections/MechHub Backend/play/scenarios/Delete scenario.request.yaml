@@ -1,0 +1,8 @@
+$kind: http-request
+name: Delete scenario
+description: Delete one of the current user's scenarios. 404 if not owned.
+url: "{{baseUrl}}/api/play/scenarios/{{scenarioId}}"
+method: DELETE
+headers:
+  Accept: application/json
+order: 1500
