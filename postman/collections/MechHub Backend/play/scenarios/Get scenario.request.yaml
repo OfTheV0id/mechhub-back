@@ -1,0 +1,8 @@
+$kind: http-request
+name: Get scenario
+description: Fetch one scenario (with its full structure) to load into the sandbox. 404 if not owned by the current user.
+url: "{{baseUrl}}/api/play/scenarios/{{scenarioId}}"
+method: GET
+headers:
+  Accept: application/json
+order: 1300

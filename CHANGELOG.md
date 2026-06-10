@@ -9,6 +9,20 @@
 
 ---
 
+## Claude 轮 27 — 2026-06-09 — Play 力学沙盒后端持久化
+
+### 功能
+
+- **新增 `play` 模块 + 表 `play_scenarios`**,持久化前端「Play 力学沙盒」的命名场景(owned-by-user,`structure` 为完整结构 JSON:nodes / members / supports / loads)。新增接口(都需登录,按 user_id 作用域):
+  - `GET    /api/play/scenarios`        列我的场景(updated_at desc)
+  - `POST   /api/play/scenarios`        建场景(`{ name, structure }`,structure 为 JSON 对象,原样存 `type:json` 列)
+  - `GET    /api/play/scenarios/:id`    取单个场景(载入沙盒用)
+  - `PATCH  /api/play/scenarios/:id`    改场景(`name` 必填;`structure` 可选,省略=仅重命名)
+  - `DELETE /api/play/scenarios/:id`    删场景
+- 响应 `structure` 字段为原生 JSON 对象(`json.RawMessage`),前端无需二次 `JSON.parse`。纯 additive,非破坏。
+
+---
+
 ## Claude 轮 26 — 2026-06-08 — Workshop/Lab 改用受力图判定
 
 ### 破坏性 ⚠️

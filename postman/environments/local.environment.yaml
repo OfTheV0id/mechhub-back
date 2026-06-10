@@ -34,3 +34,5 @@ values:
     value: ''
   - key: mediaId
     value: ''
+  - key: scenarioId
+    value: ''

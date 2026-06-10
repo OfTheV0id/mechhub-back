@@ -1,0 +1,16 @@
+$kind: http-request
+name: Update scenario
+description: |-
+  Overwrite a scenario. `name` is required; `structure` is optional — omit it to rename only (keeps the stored structure), include it to re-save the scene.
+url: "{{baseUrl}}/api/play/scenarios/{{scenarioId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "三角桁架(改)"
+    }
+order: 1400

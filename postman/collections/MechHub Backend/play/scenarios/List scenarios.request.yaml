@@ -1,0 +1,8 @@
+$kind: http-request
+name: List scenarios
+description: List the current user's saved sandbox scenarios, ordered by updated_at desc.
+url: "{{baseUrl}}/api/play/scenarios"
+method: GET
+headers:
+  Accept: application/json
+order: 1100

@@ -13,6 +13,7 @@ import (
 	"mechhub-back/internal/mail"
 	"mechhub-back/internal/middleware"
 	"mechhub-back/internal/oauth"
+	"mechhub-back/internal/play"
 	"mechhub-back/internal/realtime"
 	"mechhub-back/internal/session"
 	"mechhub-back/internal/solochat"
@@ -41,6 +42,12 @@ func New(cfg *config.Config, db *gorm.DB, sessions *session.Store, mailer *mail.
 	solochatSvc := solochat.NewService(solochatRepo, llmSvc, oss, cfg)
 	solochatHandler := solochat.NewHandler(solochatSvc)
 	solochat.Mount(api, solochatHandler, auth)
+
+	// Play(力学沙盒场景持久化)
+	playRepo := play.NewRepo(db)
+	playSvc := play.NewService(playRepo)
+	playHandler := play.NewHandler(playSvc)
+	play.Mount(api, playHandler, auth)
 
 	// Course(学习板块)
 	courseRepo := course.NewRepo(db)
